@@ -14,7 +14,7 @@
   | --> ClientHello -----------------------> |
   | <-- Query#2 Challenge (加密) ----------- |  服务端身份签名
   | --> ClientProof (加密) ----------------> |  玩家密钥签名
-  | <-- Query#3 PasswordRequest (可选) ----- |  登录密码 / 找回密码
+  | <-- Query#3 PasswordRequest (可选) ----- |  登录密码 / 找回密码（密码通道）
   | --> PasswordAnswer (加密) -------------> |
   | <-- Query#N Finish (加密) -------------- |  结果；是否开启隧道
   | --> FinishAck -------------------------> |  [隧道] 双方切换为隧道加密
@@ -22,7 +22,9 @@
 ```
 
 - 全部在**登录阶段**完成，使用原版的 login query：服务端发 `ClientboundCustomQueryPacket`，客户端回 `ServerboundCustomQueryPacket`（1.20.2+ 为 `ServerboundCustomQueryAnswerPacket`）
-- 频道 ID：`trustedserver:auth`
+- 频道 ID：
+  - `trustedserver:auth`：握手与身份认证
+  - `trustedserver:password`：**密码专用通道**，登录阶段和游戏阶段所有携带密码的消息都只走这里，使用独立派生的密钥和独立序号（见 4.3、第 6 节）
 - 由服务端驱动，每一轮是一对 query / answer，用原版的 transaction id 对应
 - 认证完成前，服务端**不发送** `LoginSuccess`，连接不会进入配置阶段或游戏阶段，满足“0 权限”
 - 本协议的 query 必须早于加载器自身的登录握手（Forge 1.18.2–1.19.4 的 `fml:loginwrapper`），没装 mod 的连接拿不到服务端的 mod 列表
@@ -111,9 +113,11 @@ k_s2c        = HKDF-Expand(prk, "tsrv v1 auth s2c" || transcript_0, 32)
 k_c2s        = HKDF-Expand(prk, "tsrv v1 auth c2s" || transcript_0, 32)
 k_tun_s2c    = HKDF-Expand(prk, "tsrv v1 tunnel s2c" || transcript_0, 32)
 k_tun_c2s    = HKDF-Expand(prk, "tsrv v1 tunnel c2s" || transcript_0, 32)
-k_play_s2c   = HKDF-Expand(prk, "tsrv v1 play s2c" || transcript_0, 32)
-k_play_c2s   = HKDF-Expand(prk, "tsrv v1 play c2s" || transcript_0, 32)
+k_pw_s2c     = HKDF-Expand(prk, "tsrv v1 password s2c" || transcript_0, 32)
+k_pw_c2s     = HKDF-Expand(prk, "tsrv v1 password c2s" || transcript_0, 32)
 ```
+
+`k_pw_*` 只用于密码通道 `trustedserver:password`，与认证通道的密钥互不复用。密码通道的序号从登录阶段一直延续到游戏阶段，不清零，所以登录阶段的密码消息无法在游戏阶段被重放。
 
 username 和正版/离线标志写进 transcript，防止中间人改用户名或降级模式。
 
@@ -145,13 +149,15 @@ player_sig     : 64 bytes   Sign(player_key, "tsrv v1 client" || transcript_0)
 
 | 状态 | 处理 |
 |---|---|
-| 该身份无绑定记录（新用户名） | 绑定 `player_pub`（TOFU），然后进入 Finish |
+| 该身份无绑定记录（新用户名） | 绑定 `player_pub`（TOFU），标记为**受限**（见 6.1），然后进入 Finish |
 | 公钥一致，未设登录密码 | 进入 Finish |
 | 公钥一致，已设登录密码 | 发 PasswordRequest(LOGIN) |
 | 公钥不一致，已设找回密码 | 发 PasswordRequest(RECOVERY) |
 | 公钥不一致，未设找回密码 | 断开，并明确提示“密钥不匹配，请联系管理员重置” |
 
-### 4.7 PasswordRequest（S→C，加密，type=0x05）
+### 4.7 PasswordRequest（S→C，密码通道，type=0x05）
+
+以频道 `trustedserver:password` 的 login query 发送，用 `k_pw_s2c` 加密。
 
 ```
 kind           : u8   1 = LOGIN, 2 = RECOVERY
@@ -161,7 +167,9 @@ timeout_sec    : u16
 
 客户端弹出输入框，标题和说明按 `kind` 区分。RECOVERY 时明确提示“找回成功后，当前设备的新密钥将取代旧绑定”。
 
-### 4.8 PasswordAnswer（C→S，加密，type=0x06）
+### 4.8 PasswordAnswer（C→S，密码通道，type=0x06）
+
+用 `k_pw_c2s` 加密。服务端只接受对密码通道 query 的回答里出现此类型，出现在认证通道里即断开。
 
 ```
 password       : string   最长 128 个字符
@@ -206,13 +214,27 @@ notices        : varbytes  客户端进服后要显示的提示（如“尚未�
 在离线模式且未开隧道时，原版连接是明文，直接把聊天命令发出去会暴露密码。因此：
 
 - 客户端 mod 在本地拦截 `/passwd` 和 `/recoverypasswd`，**不作为聊天命令发出**
-- 改为通过自定义游戏数据包（play custom payload，频道 `trustedserver:secure`）发送，用 `k_play_*` 加密，序号独立计数
+- 改为通过自定义游戏数据包（play custom payload）在**密码通道** `trustedserver:password` 上发送，用 `k_pw_*` 加密，序号接续登录阶段
 - 消息类型：
   - `SetPassword{password}`
   - `SetRecoveryPassword{password}`
   - `Result{code, message}`
 - 服务端依然注册这两个命令，但直接通过聊天执行时一律拒绝并提示，并且**不写入命令日志**
 - 管理员重置只能在服务端控制台执行：`trustedserver reset <player> key|password|recovery|all`
+
+### 6.1 新用户受限状态
+
+新用户名首次绑定后处于**受限**状态，这是服务端本地的权限状态，不涉及线上协议：
+
+- **强制生存模式**：每次进服都设为生存模式；受限期间任何途径把玩家改为其他模式，都会被立即改回
+- **禁止执行所有指令**：拦截该玩家作为来源的全部指令执行（包括聊天输入的指令和客户端直接发送的指令包），并向其发送空的指令树，Tab 补全看不到任何指令，也不会泄露服务器装了哪些插件或 mod
+- `/passwd`、`/recoverypasswd` 不受影响：它们由客户端拦截并走密码通道，并不是服务端的指令执行
+- 解除方式：
+  - **玩家通过 `/passwd` 设定登录密码后自动解除**。依据是威胁模型 A：自动 bot 脚本不会针对本 mod 特化，不会走密码通道设密码
+  - 管理员也可以在服务端控制台执行 `trustedserver trust <player>` 手动解除
+  - 管理员用 `trustedserver reset <player> password|all` 清除密码后，该玩家恢复受限
+- 受限期间每次进服都通过 Finish 的 `notices` 提示“设定密码后解除限制”
+- 受限玩家同时是 OP 时，以受限为准，OP 权限一并暂停
 
 ## 7. 拦截与限流（握手之前）
 
@@ -239,6 +261,7 @@ CREATE TABLE players (
   player_pub     BLOB NOT NULL,      -- Ed25519 公钥
   password_hash  TEXT,               -- Argon2id 编码串，NULL 表示未设置
   recovery_hash  TEXT,
+  restricted     INTEGER NOT NULL DEFAULT 1,  -- 1 = 新用户受限状态
   created_at     INTEGER NOT NULL,
   last_login_at  INTEGER,
   last_ip        TEXT
@@ -253,7 +276,7 @@ CREATE TABLE lockouts (
 CREATE TABLE audit_log (
   ts             INTEGER NOT NULL,
   subject        TEXT NOT NULL,
-  event          TEXT NOT NULL,      -- bind / login_ok / login_fail / recover / reset / reject
+  event          TEXT NOT NULL,      -- bind / login_ok / login_fail / recover / reset / trust / reject
   ip             TEXT
 );
 ```
