@@ -149,8 +149,9 @@ player_sig     : 64 bytes   Sign(player_key, "tsrv v1 client" || transcript_0)
 
 | 状态 | 处理 |
 |---|---|
-| 该身份无绑定记录（新用户名） | 绑定 `player_pub`（TOFU），标记为**受限**（见 6.1），然后进入 Finish |
-| 公钥一致，未设登录密码 | 进入 Finish |
+| 该身份无绑定记录（新用户名） | 绑定 `player_pub`（TOFU），标记为**受限**（见 6.1），发 PasswordRequest(SET) |
+| 公钥一致，受限且未设登录密码 | 发 PasswordRequest(SET) |
+| 公钥一致，未受限且未设登录密码 | 进入 Finish |
 | 公钥一致，已设登录密码 | 发 PasswordRequest(LOGIN) |
 | 公钥不一致，已设找回密码 | 发 PasswordRequest(RECOVERY) |
 | 公钥不一致，未设找回密码 | 断开，并明确提示“密钥不匹配，请联系管理员重置” |
@@ -160,12 +161,16 @@ player_sig     : 64 bytes   Sign(player_key, "tsrv v1 client" || transcript_0)
 以频道 `trustedserver:password` 的 login query 发送，用 `k_pw_s2c` 加密。
 
 ```
-kind           : u8   1 = LOGIN, 2 = RECOVERY
-attempts_left  : u8
+kind           : u8   1 = LOGIN, 2 = RECOVERY, 3 = SET
+attempts_left  : u8   SET 时无意义，固定为 0
 timeout_sec    : u16
 ```
 
-客户端弹出输入框，标题和说明按 `kind` 区分。RECOVERY 时明确提示“找回成功后，当前设备的新密钥将取代旧绑定”。
+客户端弹出输入框，标题和说明按 `kind` 区分：
+
+- LOGIN：输入登录密码
+- RECOVERY：输入找回密码，并明确提示“找回成功后，当前设备的新密钥将取代旧绑定”
+- SET：设定登录密码，包含“密码”和“确认密码”两个输入框，两次输入一致才允许提交（在客户端本地校验）。提示“进入游戏前设定密码可免受新用户限制”，并提供“跳过”按钮
 
 ### 4.8 PasswordAnswer（C→S，密码通道，type=0x06）
 
@@ -180,7 +185,9 @@ password       : string   最长 128 个字符
 - 判定流程：
   - LOGIN 正确：进入 Finish
   - RECOVERY 正确：把绑定改为本次的 `player_pub`；如果还设了登录密码，再发一次 PasswordRequest(LOGIN)
-  - 错误：失败计数加 1，`attempts_left > 0` 时重发请求，否则锁定并断开
+  - SET 且 `password` 非空：用 Argon2id 保存为登录密码，**解除受限**，进入 Finish
+  - SET 且 `password` 为空（玩家点了“跳过”或提示框超时前关闭）：保持受限，进入 Finish
+  - LOGIN / RECOVERY 错误：失败计数加 1，`attempts_left > 0` 时重发请求，否则锁定并断开
 
 ### 4.9 Finish（S→C，加密，type=0x07）
 
@@ -224,13 +231,14 @@ notices        : varbytes  客户端进服后要显示的提示（如“尚未�
 
 ### 6.1 新用户受限状态
 
-新用户名首次绑定后处于**受限**状态，这是服务端本地的权限状态，不涉及线上协议：
+新用户名首次绑定后处于**受限**状态。登录阶段会先弹出 PasswordRequest(SET)：**只要在进入游戏前设定了密码，就直接解除受限，不施加任何额外限制**。玩家跳过时才在游戏内应用以下限制（服务端本地的权限状态，不涉及线上协议）：
 
 - **强制生存模式**：每次进服都设为生存模式；受限期间任何途径把玩家改为其他模式，都会被立即改回
 - **禁止执行所有指令**：拦截该玩家作为来源的全部指令执行（包括聊天输入的指令和客户端直接发送的指令包），并向其发送空的指令树，Tab 补全看不到任何指令，也不会泄露服务器装了哪些插件或 mod
 - `/passwd`、`/recoverypasswd` 不受影响：它们由客户端拦截并走密码通道，并不是服务端的指令执行
 - 解除方式：
-  - **玩家通过 `/passwd` 设定登录密码后自动解除**。依据是威胁模型 A：自动 bot 脚本不会针对本 mod 特化，不会走密码通道设密码
+  - **玩家设定登录密码后自动解除**：进入游戏前在 SET 提示框中设定，或进入游戏后用 `/passwd` 设定。依据是威胁模型 A：自动 bot 脚本不会针对本 mod 特化，不会走密码通道设密码
+  - 受限玩家每次登录都会再次弹出 SET 提示框，直到设定密码
   - 管理员也可以在服务端控制台执行 `trustedserver trust <player>` 手动解除
   - 管理员用 `trustedserver reset <player> password|all` 清除密码后，该玩家恢复受限
 - 受限期间每次进服都通过 Finish 的 `notices` 提示“设定密码后解除限制”
