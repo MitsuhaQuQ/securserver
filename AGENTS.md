@@ -55,6 +55,10 @@ To avoid spam and auto exploit bots.
     - 原版黑名单 / 封禁（含 IP 封禁）并入本 mod 的拦截阶段，在认证前即拒绝
     - 不支持与其他认证 mod（如 AuthMe 类）共存
 
+## 文档
+
+- 认证协议设计：[docs/PROTOCOL.md](docs/PROTOCOL.md)
+
 ## 待确认
 
 - 版本上限：暂定跟随最新正式版
