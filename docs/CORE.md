@@ -33,12 +33,16 @@ fabric/ forge/ neoforge/   加载器入口，后续规划
 com.mtmrails.trustedserver.core
 ├── wire/        二进制编解码
 │   ├── WireReader / WireWriter      VarInt、varbytes、string、定长字段；越界或超长立即抛异常
-│   └── Limits                       各字段长度上限（密码 128 字符、payload 总长等）
-├── message/     协议消息（record），对应 PROTOCOL.md 第 4 节
+│   └── MalformedMessageException    受检异常：收到的字节不合规，调用方按协议错误断开
+├── message/     协议消息（record），对应 PROTOCOL.md 第 4、6 节
+│   ├── Message (sealed)             所有消息的公共接口：type() + writeBody()
 │   ├── AuthMessage (sealed)         ServerHello / ClientHello / Challenge / ClientProof / Finish / FinishAck
-│   ├── PasswordMessage (sealed)     PasswordRequest / PasswordAnswer / SetPassword / SetRecoveryPassword / Result
-│   ├── MessageCodec                 magic + type + body ↔ byte[]
-│   └── Channels                     "trustedserver:auth"、"trustedserver:password"
+│   ├── PasswordMessage (sealed)     PasswordRequest / PasswordAnswer / SetPassword / SetRecoveryPassword / PasswordResult
+│   ├── MessageType                  type 字节、所属频道、是否必须加密
+│   ├── Channel                      AUTH = "trustedserver:auth"、PASSWORD = "trustedserver:password"
+│   ├── Envelope                     magic + type + body；校验 magic、type 和频道；header 即 AEAD 的 AAD
+│   ├── MessageCodec                 明文消息的整包编解码；加密消息只编解码消息体
+│   └── Limits                       各字段长度上限（密码 128 码点、payload 4096 字节等）
 ├── crypto/
 │   ├── X25519                       临时密钥对、DH，拒绝全零结果
 │   ├── Ed25519                      签名、验签、公钥编解码（32 字节原始格式）

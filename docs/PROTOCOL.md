@@ -79,17 +79,25 @@ type         : u8
 body         : 按 type 定义
 ```
 
-`varbytes` 指 VarInt 长度前缀加字节串，`string` 指 VarInt 长度前缀加 UTF-8。
+编码规则（解码方一律严格校验，任何不合规都按协议错误断开）：
+
+- 整数为大端序；`bool` 只能是 0 或 1
+- `VarInt` 与 Minecraft 的编码相同，但只接受非负的 31 位值和最短编码，保证同一个值只有一种编码
+- `varbytes` 指 VarInt 长度前缀加字节串，`string` 指 VarInt 长度前缀加严格 UTF-8（非法序列、不成对代理字符都拒绝）
+- 单条 payload（含 magic、type、密文和认证标签）最多 4096 字节
+- 每种 type 只允许出现在它所属的频道；消息体必须恰好读完，有多余字节即拒绝
+- 只有 ServerHello、ClientHello 是明文；其余类型以明文形式出现即拒绝
 
 ### 4.1 ServerHello（S→C，明文，type=0x01）
 
 ```
-versions       : varbytes   服务端支持的协议版本列表（每个 u16）
+versions       : varbytes   服务端支持的协议版本列表（每个 u16，取值 1–65535，最多 16 个）
 server_eph_pub : 32 bytes   X25519 临时公钥
 server_nonce   : 32 bytes
 features       : u32 bitmask
                   bit0 TUNNEL_AVAILABLE  服务端允许隧道模式
-                  bit1 TUNNEL_REQUIRED   服务端强制隧道模式
+                  bit1 TUNNEL_REQUIRED   服务端强制隧道模式（必须同时置位 bit0）
+                  其余位必须为 0
 ```
 
 ### 4.2 ClientHello（C→S，明文，type=0x02）
@@ -177,7 +185,7 @@ timeout_sec    : u16
 用 `k_pw_c2s` 加密。服务端只接受对密码通道 query 的回答里出现此类型，出现在认证通道里即断开。
 
 ```
-password       : string   最长 128 个字符
+password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字节）；仅 SET 允许为空
 ```
 
 - 密码只在已认证的加密通道里传输，服务端用 Argon2id 校验，客户端不保存密码
@@ -192,9 +200,10 @@ password       : string   最长 128 个字符
 ### 4.9 Finish（S→C，加密，type=0x07）
 
 ```
-result         : u8   0 = OK
+result         : u8   固定为 0 = OK（失败直接断开，不发 Finish）
 tunnel         : bool 是否开启隧道（TUNNEL_REQUIRED，或双方都希望开启）
-notices        : varbytes  客户端进服后要显示的提示（如“尚未设置找回密码”）
+notice_count   : VarInt     最多 8 条
+notices        : string × notice_count   客户端进服后要显示的提示（如“尚未设置找回密码”），每条最多 1024 字节
 ```
 
 ### 4.10 FinishAck（C→S，加密，type=0x08）
@@ -222,10 +231,15 @@ notices        : varbytes  客户端进服后要显示的提示（如“尚未�
 
 - 客户端 mod 在本地拦截 `/passwd` 和 `/recoverypasswd`，**不作为聊天命令发出**
 - 改为通过自定义游戏数据包（play custom payload）在**密码通道** `trustedserver:password` 上发送，用 `k_pw_*` 加密，序号接续登录阶段
-- 消息类型：
-  - `SetPassword{password}`
-  - `SetRecoveryPassword{password}`
-  - `Result{code, message}`
+- 消息类型（均加密）：
+
+  | type | 方向 | 消息 | 字段 |
+  |---|---|---|---|
+  | 0x09 | C→S | SetPassword | `password : string`，非空，限制同 4.8 |
+  | 0x0A | C→S | SetRecoveryPassword | `password : string`，非空，限制同 4.8 |
+  | 0x0B | S→C | PasswordResult | `status : u8`（0 OK、1 REJECTED、2 RATE_LIMITED、3 ERROR）、`message : string`（最多 1024 字节） |
+
+- 两次输入是否一致由客户端在本地校验，线上只携带最终密码
 - 服务端依然注册这两个命令，但直接通过聊天执行时一律拒绝并提示，并且**不写入命令日志**
 - 管理员重置只能在服务端控制台执行：`trustedserver reset <player> key|password|recovery|all`
 
