@@ -60,6 +60,7 @@ To avoid spam and auto exploit bots.
 ## 文档
 
 - 认证协议设计：[docs/PROTOCOL.md](docs/PROTOCOL.md)
+- 核心逻辑规划：[docs/CORE.md](docs/CORE.md)
 
 ## 待确认
 
