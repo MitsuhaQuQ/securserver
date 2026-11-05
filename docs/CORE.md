@@ -90,16 +90,20 @@ com.mtmrails.trustedserver.server
 │   ├── Account (record)             对应 players 表
 │   └── SqliteStore                  players / lockouts / audit_log；user_version 迁移；WAL；直接实例化 org.sqlite.JDBC
 ├── policy/
-│   ├── RateLimiter                  按 IP 的令牌桶，覆盖 Ping 和登录
-│   ├── LockoutPolicy                按用户名和 IP 统计密码失败次数并锁定
+│   ├── NetworkKey / Cidr            计数键（IPv4 单个地址、IPv6 /64；IPv4 映射地址按 IPv4）；字面 CIDR 网段，不做 DNS
+│   ├── ConnectionGate               握手前的 IP 维度拦截：Ping 额度、登录总量额度、“未验证”额度（仅未通过可信握手的
+│   │                                连接在结束时消耗）、按地址族区分的 IP 密码错误锁定、信任网段豁免；仅存内存
+│   ├── NetworkPolicyConfig / RateLimit / IpLockout   网络防护参数（默认值对共享 IPv4 出口友好）
 │   ├── BanGate                      接口，由 common 层接上原版封禁列表
 │   └── OpGuard                      判断 OP 是否需要暂停权限（未设密码或受限）
 ├── status/
-│   └── StatusSanitizer              输入真实人数，按配置输出（真实 / 固定 / 范围内随机）；去掉玩家样本列表
+│   ├── StatusConfig                 人数显示模式：REAL / FIXED / RANDOM（范围、重新抽取间隔）
+│   └── StatusSanitizer              输出显示人数（不超过最大人数；随机值按间隔重新抽取）；玩家样本由适配层清空
 ├── config/
-│   ├── ServerConfig (record)        对应 JSON 配置
-│   └── ConfigLoader                 读写 JSON、填默认值、校验，非法配置给出明确报错
-└── ServerIdentity                   服务端 Ed25519 身份密钥的生成与加载
+│   ├── ServerConfig (record)        全部服务端配置
+│   ├── RejectionText                对外拒绝提示：原版封禁翻译键或自定义文本
+│   └── ConfigLoader / JsonSection   读写 server.json：缺键用默认值，类型 / 范围错误带完整路径报错，报告未知键
+└── ServerIdentity                   服务端 Ed25519 身份密钥：首次生成，损坏拒绝启动、绝不重新生成，提供指纹
 ```
 
 ### 3.3 `core-client`
@@ -241,7 +245,7 @@ CompletableFuture<Step> ◄─────────────────�
 | 4 | `session` 状态机 + 测试用内存账号存储 | 端到端握手和攻击场景测试通过 |
 | 4b | `core-client`：`PlayerKeyStore` + `PlayerKeyBackup` | 存储、导出 / 导入、篡改、截断、冲突与迁移测试通过 |
 | 5 | `PasswordHasher` + `PasswordPolicy` + `SqliteStore` + `AccountService` | 哈希向量、存储与迁移、管理员命令、锁定，以及用真实存储跑通完整握手的测试通过 |
-| 6 | `policy`、`status`、`config` | 策略测试通过；能生成带默认值的 JSON 配置 |
+| 6 | `policy`、`status`、`config`、`ServerIdentity` | 限流 / 锁定（含共享出口场景）、人数显示、配置读写与报错、身份密钥测试通过 |
 | 7 | `TunnelFrameCodec` + 游戏阶段密码通道接入 | 隧道帧（长度 AAD、分片 / 合并、65536 字节上限、截断）和游戏阶段密码通道的测试通过 |
 
 core 层全部完成后，再规划 `common` 层（Mixin 插入点、Netty 适配、GUI）和多版本构建（Stonecutter）。
