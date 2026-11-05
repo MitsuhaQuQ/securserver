@@ -45,12 +45,17 @@ com.mtmrails.trustedserver.core
 │   ├── MessageCodec                 明文消息的整包编解码；加密消息只编解码消息体
 │   └── Limits                       各字段长度上限（密码 128 码点、payload 4096 字节等）
 ├── crypto/
-│   ├── X25519                       临时密钥对、DH，拒绝全零结果
-│   ├── Ed25519                      签名、验签、公钥编解码（32 字节原始格式）
+│   ├── X25519                       临时密钥对、DH；u 坐标按 RFC 7748 清最高位并模 p 约简，拒绝全零结果
+│   ├── Ed25519                      普通 Ed25519；32 字节原始公钥 / 64 字节签名；拒绝非规范点编码与 S ≥ L
+│   ├── HandshakeSignatures          Challenge / ClientProof 的签名与验签（"tsrv v2 server|client" || transcript_0）
 │   ├── Hkdf                         RFC 5869，基于 HmacSHA256
-│   ├── SessionKeys                  按 PROTOCOL.md 4.3 派生六把密钥（auth / tunnel / password × 两个方向）
-│   ├── AeadChannel                  AES-256-GCM；方向标签 + u64 序号作 nonce；序号严格递增，乱序或重放即失败
-│   └── Transcript                   transcript_0 的计算
+│   ├── Transcript                   transcript_0 的计算；先严格解析两条 Hello，online_mode 取自 ServerHello
+│   ├── SessionKeys                  按 PROTOCOL.md 4.3 派生六把密钥（auth / tunnel / password × 两个方向）；接管并清零共享秘密
+│   ├── Aes256Gcm                    AES-256-GCM 原语，128 位标签
+│   ├── Direction / Side             线上方向（S2C / C2S 及其 nonce 标签）与本端角色
+│   ├── AeadStream                   一条计数流：一把密钥、一个方向、只加密或只解密；序号、使用上限，失败即永久关闭
+│   ├── SecureMessageChannel         认证或密码频道上本端的加密收发（一条 SEAL 流 + 一条 OPEN 流）
+│   └── CryptoException              受检异常：DH / 标签 / 上限 / 已关闭，调用方断开连接
 ├── session/
 │   ├── ServerAuthSession            服务端状态机
 │   ├── ClientAuthSession            客户端状态机
@@ -129,10 +134,11 @@ public final class ClientAuthSession {
     CompletableFuture<Optional<byte[]>> onQuery(String channel, byte[] payload);  // 返回空表示“不理解”
 }
 
-// 游戏阶段的密码通道，接续登录阶段的密钥和序号
-public final class PasswordChannel {
-    byte[] seal(PasswordMessage msg);
-    PasswordMessage open(byte[] payload);                     // 重放、乱序、篡改都抛异常
+// 认证 / 密码频道的加密收发（已在第 3 步实现）。密码频道由 SessionKeys.passwordChannel(side) 创建，
+// 登录阶段到游戏阶段移交同一实例，序号连续
+public final class SecureMessageChannel {
+    byte[] seal(Message msg) throws CryptoException;
+    Message open(byte[] payload) throws CryptoException, MalformedMessageException;  // 重放、乱序、篡改都抛异常
 }
 ```
 
@@ -198,11 +204,11 @@ CompletableFuture<Step> ◄─────────────────�
 |---|---|---|
 | 1 | Gradle 多模块骨架（先只建 core 三个模块）、Java 17、JUnit、`.gitignore` | 空项目 `./gradlew test` 通过 |
 | 2 | `wire` + `message` | 编解码测试全部通过 |
-| 3 | `crypto` | 通过 RFC 测试向量；`AeadChannel` 的重放和乱序测试通过 |
+| 3 | `crypto` | 通过 RFC 测试向量；冻结的已知答案向量；`AeadStream` / `SecureMessageChannel` 的隔离、篡改、重放、乱序、长度边界与使用上限测试通过 |
 | 4 | `session` 状态机 + 内存版 `AccountService` | 端到端握手和攻击场景测试通过 |
 | 5 | `PasswordHasher` + SQLite 存储 | 契约测试和迁移测试通过 |
 | 6 | `policy`、`status`、`config` | 策略测试通过；能生成带默认值的 JSON 配置 |
-| 7 | `TunnelFrameCodec` + `PasswordChannel` | 隧道和游戏阶段密码通道的测试通过 |
+| 7 | `TunnelFrameCodec` + 游戏阶段密码通道接入 | 隧道帧（长度 AAD、分片 / 合并、65536 字节上限、截断）和游戏阶段密码通道的测试通过 |
 
 core 层全部完成后，再规划 `common` 层（Mixin 插入点、Netty 适配、GUI）和多版本构建（Stonecutter）。
 
