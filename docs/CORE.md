@@ -70,7 +70,9 @@ com.mtmrails.trustedserver.core
 │   ├── ClientEnvironment            客户端本地能力接口：TOFU 记录、公钥变更确认、玩家密钥、密码弹框
 │   └── ClientStep / ClientResult / ClientFailure   Reply / Complete / Fail，及其结果与本地诊断
 ├── tunnel/
-│   └── TunnelFrameCodec             隧道帧加解密（只处理字节块，Netty 适配放在 common）
+│   ├── TunnelEncoder                把字节流切成 ≤ 65536 字节的明文块逐帧加密；不发空帧
+│   └── TunnelDecoder                接受任意分片 / 合并的输入；长度前缀读全即校验（最短编码、17–65552）；
+│                                    finish() 检测截断；失败后永久失效。Netty 适配放在 common
 └── ProtocolVersion                  当前版本号、支持列表、协商逻辑
 ```
 
@@ -82,6 +84,8 @@ com.mtmrails.trustedserver.server
 │   ├── AccountService               实现 core 的 AccountGateway；游戏内 /passwd、/recoverypasswd；管理员 reset / trust；
 │   │                                登录成功记录；累计错误锁定。Argon2id 在哈希线程池执行，数据库操作在单一写线程执行
 │   ├── AccountServiceConfig         线程数、排队上限、锁定阈值与时长、审计保留期
+│   ├── PlayPasswordEndpoint         游戏阶段密码通道的服务端一侧：一次一个请求、每分钟 5 次；加密与发送同锁保证顺序；
+│                                    非法消息 / 解密失败即踢出
 │   └── AdminResult                  管理员命令结果
 ├── password/
 │   ├── PasswordHasher               Argon2id；PHC 格式编码串；参数可配置；按串内参数校验，needsRehash 支持参数升级
@@ -116,6 +120,8 @@ com.mtmrails.trustedserver.client
 │                                    损坏即报错、绝不静默重新生成；list() 供导出界面；importKey() 冲突时不覆盖
 ├── PlayerKeyBackup                  导出 / 导入备份文件（全部或所选密钥，可选备份密码）；逐条校验密钥对，拒绝重复定位
 ├── BackupException                  UNSUPPORTED_FORMAT / PASSWORD_REQUIRED / WRONG_PASSWORD_OR_CORRUPTED / CORRUPTED
+├── PasswordCommand                  本地拦截 /passwd、/recoverypasswd：Set / Invalid（只在本地提示）/ NotOurs
+├── PlayPasswordClient               游戏阶段密码通道的客户端一侧；同时只允许一个请求在途
 └── （密码弹框与公钥变更确认属于 core 的 ClientEnvironment，由 common 层用 GUI 实现）
 ```
 
@@ -246,7 +252,7 @@ CompletableFuture<Step> ◄─────────────────�
 | 4b | `core-client`：`PlayerKeyStore` + `PlayerKeyBackup` | 存储、导出 / 导入、篡改、截断、冲突与迁移测试通过 |
 | 5 | `PasswordHasher` + `PasswordPolicy` + `SqliteStore` + `AccountService` | 哈希向量、存储与迁移、管理员命令、锁定，以及用真实存储跑通完整握手的测试通过 |
 | 6 | `policy`、`status`、`config`、`ServerIdentity` | 限流 / 锁定（含共享出口场景）、人数显示、配置读写与报错、身份密钥测试通过 |
-| 7 | `TunnelFrameCodec` + 游戏阶段密码通道接入 | 隧道帧（长度 AAD、分片 / 合并、65536 字节上限、截断）和游戏阶段密码通道的测试通过 |
+| 7 | `TunnelEncoder` / `TunnelDecoder` + 游戏阶段密码通道（`PlayPasswordEndpoint`、`PlayPasswordClient`、`PasswordCommand`） | 隧道帧（格式、长度 AAD、分片 / 合并、65536 字节边界、截断、篡改、重放）与游戏内 /passwd 端到端测试通过 |
 
 core 层全部完成后，再规划 `common` 层（Mixin 插入点、Netty 适配、GUI）和多版本构建（Stonecutter）。
 

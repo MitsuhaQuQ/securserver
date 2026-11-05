@@ -42,6 +42,7 @@ class RealStorageHandshakeTest {
     MutableClock clock;
     AccountService service;
     Ed25519.KeyPairData serverIdentity;
+    com.mtmrails.trustedserver.core.session.ClientResult lastClientResult;
 
     /** 一台“电脑”：自己的 TOFU 记录和玩家密钥。 */
     static final class Device implements ClientEnvironment {
@@ -107,6 +108,7 @@ class RealStorageHandshakeTest {
                 answer = reply.payload();
             } else if (step instanceof ClientStep.Complete complete) {
                 answer = complete.payload();
+                lastClientResult = complete.result();
             } else {
                 return server.timeout();
             }
@@ -185,6 +187,45 @@ class RealStorageHandshakeTest {
         AuthOutcome.Accepted accepted = (AuthOutcome.Accepted) login(newPc, uuid, true, true);
         assertEquals(Optional.of(RebindReason.ONLINE_MODE_IDENTITY), accepted.reboundBy());
         assertTrue(events(uuid).contains("online_rebind"));
+    }
+
+    @Test
+    void passwdInGameUsesTheHandedOverChannel() throws Exception {
+        Device pc = new Device().answer(""); // 登录时跳过设密码，保持受限
+        AuthOutcome.Accepted accepted = (AuthOutcome.Accepted) login(pc, "steve", false, false);
+        assertTrue(accepted.restricted());
+
+        java.util.concurrent.BlockingQueue<byte[]> toClient = new java.util.concurrent.LinkedBlockingQueue<>();
+        java.util.concurrent.BlockingQueue<Boolean> unrestricted = new java.util.concurrent.LinkedBlockingQueue<>();
+        PlayPasswordEndpoint endpoint = new PlayPasswordEndpoint(accepted.accountId(),
+                accepted.handover().passwordChannel(), service, new PlayPasswordEndpoint.Listener() {
+                    @Override
+                    public void send(byte[] payload) {
+                        toClient.add(payload);
+                    }
+
+                    @Override
+                    public void passwordSet(boolean login) {
+                        unrestricted.add(login);
+                    }
+
+                    @Override
+                    public void kick() {
+                        throw new AssertionError("kicked");
+                    }
+                }, clock);
+        com.mtmrails.trustedserver.client.PlayPasswordClient client =
+                new com.mtmrails.trustedserver.client.PlayPasswordClient(lastClientResult.handover().passwordChannel());
+
+        var command = (com.mtmrails.trustedserver.client.PasswordCommand.Set)
+                com.mtmrails.trustedserver.client.PasswordCommand.parse("/passwd new-secret new-secret");
+        endpoint.onPayload(client.request(command));
+        byte[] reply = toClient.poll(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertEquals(com.mtmrails.trustedserver.core.message.PasswordResult.Status.OK, client.onPayload(reply).status());
+        assertEquals(Boolean.TRUE, unrestricted.poll(5, java.util.concurrent.TimeUnit.SECONDS));
+
+        pc.answer("new-secret");
+        assertFalse(((AuthOutcome.Accepted) login(pc, "steve", false, false)).restricted());
     }
 
     @Test

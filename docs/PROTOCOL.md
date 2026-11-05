@@ -306,6 +306,9 @@ notices        : string × notice_count   客户端进服后要显示的提示�
   | 0x0B | S→C | PasswordResult | `status : u8`（0 OK、1 REJECTED、2 RATE_LIMITED、3 ERROR）、`message : string`（最多 1024 字节） |
 
 - 两次输入是否一致由客户端在本地校验，线上只携带最终密码
+- 客户端拦截规则：只要命令名是 `passwd` 或 `recoverypasswd`（不区分大小写），无论参数是否正确都在本地处理，绝不作为聊天命令发出；参数以单个空格分隔，因此密码不能包含空格
+- 同一玩家同时只能有一个请求在处理，每分钟最多 5 次；超出时返回 `PasswordResult(RATE_LIMITED)`。结果按请求顺序加密发送
+- 服务端在游戏阶段的密码通道上只接受 SetPassword / SetRecoveryPassword；解密失败、格式错误、重放或其他类型均按 4.3.3 踢出玩家，之后不再处理该通道的任何数据。设定登录密码成功即解除受限（6.1），设定找回密码不改变受限状态
 - 服务端依然注册这两个命令，但直接通过聊天执行时一律拒绝并提示，并且**不写入命令日志**
 - 管理员重置只能在服务端控制台执行：`trustedserver reset <player> key|password|recovery|all`
   - `key`：清空设备绑定，保留密码与受限状态；下次登录直接绑定新设备（设了登录密码仍须先输对，见 4.6）
