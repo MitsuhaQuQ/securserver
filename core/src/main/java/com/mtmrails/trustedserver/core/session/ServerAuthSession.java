@@ -47,8 +47,10 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>任何协议、密码学或账号存储失败都会废弃本连接的所有通道并返回 {@link AuthOutcome.Rejected}。
  *
- * <p>找回流程的改绑推迟到整个认证成功前才提交：已设登录密码时，必须连登录密码也验证通过，
- * 避免只掌握找回密码、却输错登录密码的一方改掉原有绑定。
+ * <p>公钥与绑定不一致时：本连接已通过 Mojang session 验证（{@code mojangVerified}）时视为连接可信，
+ * 直接改绑到新设备；离线模式，或正版服务器上 session 无效而回退为无验证的连接，须输对找回密码。
+ * Mojang 验证只替代设备密钥这一项，之后的玩家认证（登录密码、设定密码、受限）全部保留。两种情况下，改绑都推迟到整个认证成功前才提交：已设登录密码时，
+ * 必须连登录密码也验证通过，避免只掌握找回密码（或只掌握正版账号）、却输错登录密码的一方改掉原有绑定。
  */
 public final class ServerAuthSession {
     private enum State {
@@ -63,6 +65,7 @@ public final class ServerAuthSession {
     private final String accountId;
     private final String username;
     private final boolean onlineMode;
+    private final boolean mojangVerified;
     private final ServerAuthConfig config;
     private final Ed25519.KeyPairData identity;
     private final AccountGateway accounts;
@@ -87,20 +90,27 @@ public final class ServerAuthSession {
     private boolean trusted;
     private byte[] playerPub;
     private AccountView account;
-    private boolean rebindPending;
+    private RebindReason pendingRebind;
+    private RebindReason rebound;
     private PasswordRequest.Kind pendingKind;
     private int attemptsLeft;
 
     /**
      * @param accountId 账号 ID：正版为 UUID，离线为小写用户名
      * @param username 原版登录 Hello 中的原始用户名（参与 transcript）
-     * @param onlineMode 服务端实际的 online-mode
+     * @param onlineMode 服务端实际的 online-mode（写入 ServerHello）
+     * @param mojangVerified 本连接是否通过了 Mojang session 验证；正版服务器上 session 无效时为 {@code false}，
+     *        按无验证回退处理。离线模式下必须为 {@code false}
      */
-    public ServerAuthSession(String accountId, String username, boolean onlineMode, ServerAuthConfig config,
-            Ed25519.KeyPairData identity, AccountGateway accounts, SecureRandom random) {
+    public ServerAuthSession(String accountId, String username, boolean onlineMode, boolean mojangVerified,
+            ServerAuthConfig config, Ed25519.KeyPairData identity, AccountGateway accounts, SecureRandom random) {
         this.accountId = Objects.requireNonNull(accountId, "accountId");
         this.username = Objects.requireNonNull(username, "username");
         this.onlineMode = onlineMode;
+        if (mojangVerified && !onlineMode) {
+            throw new IllegalArgumentException("an offline-mode server cannot have Mojang-verified connections");
+        }
+        this.mojangVerified = mojangVerified;
         this.config = Objects.requireNonNull(config, "config");
         this.identity = Objects.requireNonNull(identity, "identity");
         this.accounts = Objects.requireNonNull(accounts, "accounts");
@@ -248,6 +258,9 @@ public final class ServerAuthSession {
         if (Arrays.equals(account.playerPub(), playerPub)) {
             return CompletableFuture.completedFuture(afterKeyMatched());
         }
+        if (mojangVerified) {
+            return identityVerified(RebindReason.ONLINE_MODE_IDENTITY);
+        }
         if (account.hasRecoveryPassword()) {
             return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.RECOVERY));
         }
@@ -309,31 +322,37 @@ public final class ServerAuthSession {
                     return passwordFailed();
                 }
                 return accounts.verifyRecoveryPassword(accountId, secret)
-                        .thenCompose(ok -> ok ? recoverySucceeded() : passwordFailed());
+                        .thenCompose(ok -> ok ? identityVerified(RebindReason.RECOVERY) : passwordFailed());
             default:
                 throw new IllegalStateException("unreachable");
         }
     }
 
-    private CompletableFuture<ServerStep> recoverySucceeded() {
+    /**
+     * 身份已确认（找回密码正确，或正版 session），准备改绑到本次的公钥。
+     * 已设登录密码时先验证登录密码，改绑推迟到它通过之后。
+     */
+    private CompletableFuture<ServerStep> identityVerified(RebindReason reason) {
         if (account.hasLoginPassword()) {
-            rebindPending = true;
+            pendingRebind = reason;
             return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.LOGIN));
         }
-        return accounts.rebind(accountId, playerPub).thenApply(v -> {
-            account = account.withPlayerPub(playerPub);
-            return afterKeyMatched();
-        });
+        return commitRebind(reason).thenApply(v -> afterKeyMatched());
     }
 
     private CompletableFuture<ServerStep> loginSucceeded() {
-        if (!rebindPending) {
+        if (pendingRebind == null) {
             return CompletableFuture.completedFuture(finish());
         }
-        return accounts.rebind(accountId, playerPub).thenApply(v -> {
-            rebindPending = false;
+        RebindReason reason = pendingRebind;
+        pendingRebind = null;
+        return commitRebind(reason).thenApply(v -> finish());
+    }
+
+    private CompletableFuture<Void> commitRebind(RebindReason reason) {
+        return accounts.rebind(accountId, playerPub, reason).thenRun(() -> {
             account = account.withPlayerPub(playerPub);
-            return finish();
+            rebound = reason;
         });
     }
 
@@ -350,7 +369,7 @@ public final class ServerAuthSession {
         expectedChannel = Channel.AUTH;
         try {
             return new ServerStep.Send(new Outbound(Channel.AUTH,
-                    auth.seal(new Finish(tunnel, config.noticesFor(account)))));
+                    auth.seal(new Finish(tunnel, config.noticesFor(account, rebound != null)))));
         } catch (CryptoException e) {
             return reject(RejectReason.CRYPTO_FAILURE);
         }
@@ -364,7 +383,8 @@ public final class ServerAuthSession {
         }
         SessionHandover handover = SessionHandover.create(keys, Side.SERVER, password, tunnel);
         outcome = new AuthOutcome.Accepted(accountId, username, playerPub, account.restricted(),
-                account.hasLoginPassword(), account.hasRecoveryPassword(), config.noticesFor(account), handover);
+                account.hasLoginPassword(), account.hasRecoveryPassword(), config.noticesFor(account, rebound != null),
+                Optional.ofNullable(rebound), handover);
         state = State.DONE;
         auth.close();
         keys.destroy();

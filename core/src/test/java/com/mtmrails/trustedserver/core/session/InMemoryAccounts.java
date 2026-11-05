@@ -34,6 +34,7 @@ final class InMemoryAccounts implements AccountGateway {
     final Map<String, Account> accounts = new ConcurrentHashMap<>();
     final List<Failure> failures = new ArrayList<>();
     final List<String> rebinds = new ArrayList<>();
+    final List<RebindReason> rebindReasons = new ArrayList<>();
     private final Executor executor;
     boolean failNextCall;
     /** 模拟并发连接抢先绑定：bindNew 一律返回 false。 */
@@ -95,11 +96,12 @@ final class InMemoryAccounts implements AccountGateway {
     }
 
     @Override
-    public CompletableFuture<Void> rebind(String accountId, byte[] playerPub) {
+    public CompletableFuture<Void> rebind(String accountId, byte[] playerPub, RebindReason reason) {
         return async(() -> {
             accounts.get(accountId).playerPub = playerPub.clone();
             synchronized (rebinds) {
                 rebinds.add(accountId);
+                rebindReasons.add(reason);
             }
             return null;
         });

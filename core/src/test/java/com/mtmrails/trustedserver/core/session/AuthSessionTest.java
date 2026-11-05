@@ -199,6 +199,9 @@ class AuthSessionTest {
         assertEquals(List.of(PasswordRequest.Kind.RECOVERY, PasswordRequest.Kind.LOGIN), kinds(env));
         assertArrayEquals(h.clientPublicKey(), accounts.accounts.get("steve").playerPub);
         assertEquals(List.of("steve"), accounts.rebinds);
+        assertEquals(List.of(RebindReason.RECOVERY), accounts.rebindReasons);
+        assertEquals(java.util.Optional.of(RebindReason.RECOVERY), h.accepted().reboundBy());
+        assertEquals(CONFIG.rebindNotice(), h.clientResult().notices().get(0));
     }
 
     @Test
@@ -232,6 +235,118 @@ class AuthSessionTest {
         Handshake h = handshake().run();
         assertFalse(h.accepted().restricted());
         assertEquals(List.of(PasswordRequest.Kind.RECOVERY, PasswordRequest.Kind.SET), kinds(env));
+    }
+
+    // ================= 正版模式：Mojang 验证保证连接可信，玩家认证保留 =================
+
+    private Handshake onlineHandshake() {
+        Handshake h = handshake();
+        h.onlineMode = true;
+        h.mojangVerified = true;
+        h.accountId = "069a79f4-44e9-4726-a5be-fca90e38aaf5"; // 正版按 UUID 记录
+        return h;
+    }
+
+    /** 正版服务器上 session 无效，按无验证回退。 */
+    private Handshake invalidSessionHandshake() {
+        Handshake h = onlineHandshake();
+        h.mojangVerified = false;
+        return h;
+    }
+
+    @Test
+    void invalidSessionFallsBackToUnverifiedRules() {
+        byte[] original = otherKey();
+        accounts.put(UUID, original, false, null, null);
+        Handshake h = invalidSessionHandshake().run();
+        assertEquals(new AuthOutcome.Rejected(RejectReason.KEY_MISMATCH, true), h.rejected());
+        assertArrayEquals(original, accounts.accounts.get(UUID).playerPub);
+    }
+
+    @Test
+    void invalidSessionCanStillRecoverWithRecoveryPassword() {
+        accounts.put(UUID, otherKey(), false, null, "rec");
+        env.answer("rec");
+        Handshake h = invalidSessionHandshake().run();
+        assertEquals(List.of(PasswordRequest.Kind.RECOVERY), kinds(env));
+        assertEquals(java.util.Optional.of(RebindReason.RECOVERY), h.accepted().reboundBy());
+    }
+
+    @Test
+    void invalidSessionWithMatchingKeyIsAccepted() {
+        accounts.put(UUID, clientKey(), false, null, "rec");
+        assertTrue(invalidSessionHandshake().run().accepted().reboundBy().isEmpty());
+    }
+
+    @Test
+    void offlineServerCannotClaimMojangVerification() {
+        assertThrows(IllegalArgumentException.class, () -> new ServerAuthSession("steve", "Steve", false, true,
+                CONFIG, serverIdentity, accounts, new SecureRandom()));
+    }
+
+    private static final String UUID = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+
+    @Test
+    void onlineModeNewDeviceIsRebasedWithoutRecoveryPassword() {
+        byte[] original = otherKey();
+        accounts.put(UUID, original, false, null, null); // 没有找回密码：离线模式下会被拒绝
+        Handshake h = onlineHandshake().run();
+        AuthOutcome.Accepted accepted = h.accepted();
+        assertEquals(java.util.Optional.of(RebindReason.ONLINE_MODE_IDENTITY), accepted.reboundBy());
+        assertArrayEquals(h.clientPublicKey(), accounts.accounts.get(UUID).playerPub);
+        assertEquals(List.of(RebindReason.ONLINE_MODE_IDENTITY), accounts.rebindReasons);
+        assertTrue(env.prompts.isEmpty());
+        // 下发更新认证：客户端在 Finish 中收到改绑提示
+        assertEquals(CONFIG.rebindNotice(), h.clientResult().notices().get(0));
+    }
+
+    @Test
+    void onlineModeStillRequiresLoginPasswordBeforeRebind() {
+        accounts.put(UUID, otherKey(), false, "pw", null);
+        env.answer("pw");
+        Handshake h = onlineHandshake().run();
+        assertEquals(List.of(PasswordRequest.Kind.LOGIN), kinds(env));
+        assertArrayEquals(h.clientPublicKey(), accounts.accounts.get(UUID).playerPub);
+        assertEquals(java.util.Optional.of(RebindReason.ONLINE_MODE_IDENTITY), h.accepted().reboundBy());
+    }
+
+    @Test
+    void onlineModeWrongLoginPasswordKeepsOriginalBinding() {
+        byte[] original = otherKey();
+        accounts.put(UUID, original, false, "pw", null);
+        env.answer("a", "b", "c");
+        Handshake h = onlineHandshake().run();
+        assertEquals(new AuthOutcome.Rejected(RejectReason.PASSWORD_ATTEMPTS_EXHAUSTED, true), h.rejected());
+        assertArrayEquals(original, accounts.accounts.get(UUID).playerPub);
+        assertTrue(accounts.rebinds.isEmpty());
+    }
+
+    @Test
+    void onlineModeRestrictedAccountIsStillAskedToSetPassword() {
+        accounts.put(UUID, otherKey(), true, null, null);
+        env.answer((String) null);
+        Handshake h = onlineHandshake().run();
+        assertEquals(List.of(PasswordRequest.Kind.SET), kinds(env));
+        assertTrue(h.accepted().restricted());
+        assertEquals(List.of(CONFIG.rebindNotice(), CONFIG.restrictedNotice(), CONFIG.recoveryReminderNotice()),
+                h.clientResult().notices());
+    }
+
+    @Test
+    void onlineModeMatchingKeyIsNotRebound() {
+        accounts.put(UUID, clientKey(), false, null, "rec");
+        Handshake h = onlineHandshake().run();
+        assertTrue(h.accepted().reboundBy().isEmpty());
+        assertTrue(accounts.rebinds.isEmpty());
+        assertEquals(List.of(), h.clientResult().notices());
+    }
+
+    @Test
+    void offlineModeMismatchStillNeedsRecovery() {
+        accounts.put("steve", otherKey(), false, null, null);
+        Handshake h = handshake().run(); // 离线模式
+        assertEquals(new AuthOutcome.Rejected(RejectReason.KEY_MISMATCH, true), h.rejected());
+        assertTrue(accounts.rebinds.isEmpty());
     }
 
     // ================= 版本协商 =================
@@ -280,7 +395,8 @@ class AuthSessionTest {
     private Handshake tunnelCase(ServerAuthConfig.TunnelPolicy policy, boolean want) {
         accounts.put("steve", clientKey(), false, null, "rec");
         Handshake h = handshake();
-        h.config = new ServerAuthConfig(policy, 3, 60, CONFIG.restrictedNotice(), CONFIG.recoveryReminderNotice());
+        h.config = new ServerAuthConfig(policy, 3, 60, CONFIG.restrictedNotice(), CONFIG.recoveryReminderNotice(),
+                CONFIG.rebindNotice());
         h.wantTunnel = want;
         return h.run();
     }
@@ -358,7 +474,7 @@ class AuthSessionTest {
     @Test
     void mitmStrippingTunnelFeatureIsDetected() {
         Handshake h = handshake();
-        h.config = new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.REQUIRED, 3, 60, "", "");
+        h.config = new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.REQUIRED, 3, 60, "", "", "");
         h.toClient = (c, p) -> h.queryChannels.size() == 1 ? rewriteServerHello(p,
                 s -> new ServerHello(s.versions(), s.serverEphPub(), s.serverNonce(), 0, s.onlineMode())) : p;
         h.run();
@@ -467,7 +583,8 @@ class AuthSessionTest {
     }
 
     private ServerAuthSession newServer() {
-        return new ServerAuthSession("steve", "Steve", false, CONFIG, serverIdentity, accounts, new SecureRandom());
+        return new ServerAuthSession("steve", "Steve", false, false, CONFIG, serverIdentity, accounts,
+                new SecureRandom());
     }
 
     private Ed25519.KeyPairData clientKeyPair() {
@@ -605,12 +722,16 @@ class AuthSessionTest {
     @Test
     void configValidation() {
         assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
-                ServerAuthConfig.TunnelPolicy.OPTIONAL, 0, 60, "", ""));
+                ServerAuthConfig.TunnelPolicy.OPTIONAL, 0, 60, "", "", ""));
         assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
-                ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 0, "", ""));
+                ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 0, "", "", ""));
         String big = "x".repeat(1024);
         assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
-                ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 60, big + "y", ""));
-        new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 60, big, big);
+                ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 60, big + "y", "", ""));
+        new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 60, big, big, big);
+        // 三条提示合计超过 Finish 的消息体上限
+        String bigger = "x".repeat(1020);
+        assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
+                ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 60, bigger + bigger, bigger, bigger));
     }
 }

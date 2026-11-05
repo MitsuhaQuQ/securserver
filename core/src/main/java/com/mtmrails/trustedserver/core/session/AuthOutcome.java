@@ -8,16 +8,17 @@ import java.util.Objects;
 public sealed interface AuthOutcome {
     /**
      * 放行：已收到 FinishAck。{@code restricted} 等字段反映本次认证结束时的账号状态，
-     * 供上层应用新用户限制、OP 暂停等规则。
+     * 供上层应用新用户限制、OP 暂停等规则。{@code reboundBy} 非空表示本次登录把账号改绑到了当前设备的密钥。
      */
     record Accepted(String accountId, String username, byte[] playerPub, boolean restricted,
             boolean hasLoginPassword, boolean hasRecoveryPassword, List<String> notices,
-            SessionHandover handover) implements AuthOutcome {
+            java.util.Optional<RebindReason> reboundBy, SessionHandover handover) implements AuthOutcome {
         public Accepted {
             Objects.requireNonNull(accountId, "accountId");
             Objects.requireNonNull(username, "username");
             playerPub = playerPub.clone();
             notices = List.copyOf(notices);
+            Objects.requireNonNull(reboundBy, "reboundBy");
             Objects.requireNonNull(handover, "handover");
         }
 

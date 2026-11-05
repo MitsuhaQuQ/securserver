@@ -11,7 +11,7 @@
 客户端                                    服务端
   | -- Handshake / Status Ping ------------> |  限流；Ping 响应脱敏
   | -- Hello(username) --------------------> |  IP / 名称封禁检查（拦截）
-  |                                          |  [正版] 原版加密 + Mojang 验证
+  |                                          |  [正版] 原版加密 + Mojang 验证（session 无效时回退为无验证，继续本协议）
   | <-- Query#1 ServerHello ---------------- |  协商版本 + 临时密钥交换
   | --> ClientHello -----------------------> |
   | <-- Query#2 Challenge (加密) ----------- |  服务端身份签名
@@ -86,6 +86,7 @@
 - 备份不包含登录密码、找回密码、服务端身份私钥或 TOFU 信任决定。导入必须验证公私钥匹配和目标元数据；本地已有不同密钥时不得静默覆盖
 - 服务端记录方式（TOFU）：
   - 正版模式按 **UUID** 记录（用户名已由 Mojang 验证）
+  - 正版服务器上 session 无效而回退为无验证的连接使用哪个账号 ID，见 AGENTS.md“待确认”
   - 离线模式按**小写用户名**记录
 
 ## 4. 消息格式
@@ -207,8 +208,13 @@ player_sig     : 64 bytes   Sign(player_key, "tsrv v2 client" || transcript_0)
 | 公钥一致，受限且未设登录密码 | 发 PasswordRequest(SET) |
 | 公钥一致，未受限且未设登录密码 | 进入 Finish |
 | 公钥一致，已设登录密码 | 发 PasswordRequest(LOGIN) |
-| 公钥不一致，已设找回密码 | 发 PasswordRequest(RECOVERY) |
-| 公钥不一致，未设找回密码 | 断开，并明确提示“密钥不匹配，请联系管理员重置” |
+| 公钥不一致，本连接已通过 Mojang session 验证 | 视为连接可信（新设备）：已设登录密码则发 PasswordRequest(LOGIN)，通过后才改绑；否则立即改绑，按“公钥一致”的规则继续。Finish 的 `notices` 下发改绑提示 |
+| 公钥不一致，未经 Mojang 验证，已设找回密码 | 发 PasswordRequest(RECOVERY) |
+| 公钥不一致，未经 Mojang 验证，未设找回密码 | 断开，并明确提示“密钥不匹配，请联系管理员重置” |
+
+“未经 Mojang 验证”包括离线模式，以及正版服务器上 session 无效（含 Mojang 会话服务器不可用）而回退为无验证的连接。
+
+**Mojang 验证的作用范围**：它只保证本连接的身份可信，替代“设备密钥是否匹配”这一项；之后的玩家认证全部保留——登录密码、受限账号的设定密码提示、错误次数与锁定均照常执行，改绑同样推迟到登录密码验证通过之后。ServerHello 中的 `online_mode` 仍是服务器配置，不表示某个连接是否通过了 Mojang 验证；后者只在服务端本地使用，不上线。
 
 ### 4.7 PasswordRequest（S→C，密码通道，type=0x05）
 

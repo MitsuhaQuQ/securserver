@@ -28,8 +28,8 @@ public interface AccountGateway {
     /** 设定登录密码，并解除受限（PROTOCOL.md 6.1）。 */
     CompletableFuture<Void> setLoginPassword(String accountId, String password);
 
-    /** 把账号改绑到新公钥（找回流程）。 */
-    CompletableFuture<Void> rebind(String accountId, byte[] playerPub);
+    /** 把账号改绑到新公钥（找回流程，或正版模式下的新设备）。 */
+    CompletableFuture<Void> rebind(String accountId, byte[] playerPub, RebindReason reason);
 
     /**
      * 记录一次密码错误。{@code exhausted} 为真表示本连接的尝试次数已用尽，实现应据此锁定。

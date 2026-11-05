@@ -59,7 +59,8 @@ com.mtmrails.trustedserver.core
 │   └── CryptoException              受检异常：DH / 标签 / 上限 / 已关闭，调用方断开连接
 ├── session/
 │   ├── ServerAuthSession            服务端状态机
-│   ├── ServerAuthConfig             隧道策略、每种密码的尝试次数、密码框超时、进服提示文本
+│   ├── ServerAuthConfig             隧道策略、每种密码的尝试次数、密码框超时、进服提示文本（受限 / 找回提醒 / 改绑）
+│   ├── RebindReason                 RECOVERY / ONLINE_MODE_IDENTITY
 │   ├── AccountGateway / AccountView 服务端账号访问接口（异步）与账号快照；由 core-server 的 AccountService 实现
 │   ├── ServerStep / Outbound        Send(下一条 query) / Done(结果)；query 的频道与 payload
 │   ├── AuthOutcome                  Accepted(账号状态、notices、移交对象) / Rejected(原因, 是否已可信)
@@ -105,20 +106,39 @@ com.mtmrails.trustedserver.server
 ```
 com.mtmrails.trustedserver.client
 ├── KnownServers                     服务器地址 → 服务端身份公钥（TOFU），检测公钥变化
-├── PlayerKeyStore                   (服务端身份公钥, 用户名) → 玩家 Ed25519 密钥对；文件权限设为仅本人可读
-├── PlayerKeyBackup                  单个玩家认证密钥的导入导出；校验密钥对与目标元数据，冲突时要求上层明确确认
+├── KeyTarget / StoredKey            密钥定位（服务端身份公钥 + 原始用户名）与一把密钥
+├── PlayerKeyStore                   每个定位一个文件，文件名为定位的 SHA-256；带校验和，原子写入，POSIX 下仅本人可读写；
+│                                    损坏即报错、绝不静默重新生成；list() 供导出界面；importKey() 冲突时不覆盖
+├── PlayerKeyBackup                  导出 / 导入备份文件（全部或所选密钥，可选备份密码）；逐条校验密钥对，拒绝重复定位
+├── BackupException                  UNSUPPORTED_FORMAT / PASSWORD_REQUIRED / WRONG_PASSWORD_OR_CORRUPTED / CORRUPTED
 └── （密码弹框与公钥变更确认属于 core 的 ClientEnvironment，由 common 层用 GUI 实现）
 ```
 
-密钥备份仅包含指定“服务端身份公钥 + 用户名”下用于 `ClientProof` 的玩家 Ed25519 密钥对及识别该目标所需的元数据，不导出密码、KnownServers 的信任决定或服务端身份私钥。`core-client` 负责解析、完整性校验和冲突检测；文件选择、冲突确认及安全警告由后续 common 客户端界面负责。导出容器格式和备份密码保护方案在实现该模块前单独确定。
+密钥备份仅包含指定“服务端身份公钥 + 用户名”下用于 `ClientProof` 的玩家 Ed25519 密钥对及识别该目标所需的元数据，不导出密码、KnownServers 的信任决定或服务端身份私钥。`core-client` 负责解析、完整性校验和冲突检测；mod 设置界面中的“导出认证 / 导入认证”按钮、文件选择、勾选要导出的服务器、冲突确认及明文导出警告由后续 common 客户端界面负责。
+
+备份文件格式（版本 1）：
+
+```
+header  = "TSKB" | u8 格式版本 = 1 | u8 保护方式
+保护方式 0（明文）：header | body | SHA-256(header || body)
+保护方式 1（密码）：header | salt(16) | u32 迭代次数 | nonce(12) | AES-256-GCM(key, nonce, body, aad = 此前全部字节)
+                   key = PBKDF2-HMAC-SHA256(备份密码, salt, 迭代次数, 256 位)
+body    = VarInt 条数（1–4096） | 条数 × (服务端身份公钥 32 | 用户名 string ≤ 256 字节 | 玩家公钥 32 | 私钥种子 32)
+```
+
+- 新导出的迭代次数为 600,000（OWASP 对 PBKDF2-HMAC-SHA256 的建议值）；导入只接受 100,000–10,000,000，防止弱参数文件，也防止恶意文件拖死客户端。备份密码留空即明文导出
+- 用 PBKDF2 而不是 Argon2id：JDK 自带，客户端不必打包 Bouncy Castle
+- 明文文件的 SHA-256 只用于发现意外损坏，不提供防篡改；加密文件由 GCM 认证整个文件。密码错误与加密文件被篡改无法区分，统一报 `WRONG_PASSWORD_OR_CORRUPTED`
+- 文件不超过 1 MiB；本机已有不同密钥时 `importKey(…, overwrite = false)` 返回 `CONFLICT` 且不写入，玩家确认后才以 `overwrite = true` 覆盖
 
 ## 4. 关键接口草图
 
 ```java
 // 服务端：一个连接对应一个实例，由 common 层持有
 public final class ServerAuthSession {
-    ServerAuthSession(String accountId, String username, boolean onlineMode, ServerAuthConfig config,
-                      Ed25519.KeyPairData identity, AccountGateway accounts, SecureRandom random);
+    ServerAuthSession(String accountId, String username, boolean onlineMode, boolean mojangVerified,
+                      ServerAuthConfig config, Ed25519.KeyPairData identity, AccountGateway accounts,
+                      SecureRandom random);
 
     Outbound start();                                                          // 生成 ServerHello
     CompletableFuture<ServerStep> onAnswer(Channel channel, byte[] payloadOrNull);  // null 表示对方“不理解”
@@ -150,7 +170,8 @@ public final class SecureMessageChannel {
 - 状态机本身不处理超时；超时由 common 层计时，到点后调用 `session.timeout()` 得到 `Rejected(TIMEOUT)`。若此时有回答仍在后台处理，清理推迟到它完成时，且结果一律改判超时
 - 每个连接同时只能有一个 `onAnswer` / `onQuery` 在途；账号操作可在其他线程完成，上层须把后续动作切回该连接的事件循环
 - 任何协议、密码学或账号存储失败都会废弃本连接的所有通道与会话密钥（PROTOCOL.md 4.3.3）
-- 找回流程的改绑推迟到整个认证成功前才提交：已设登录密码时，登录密码也须验证通过，避免只掌握找回密码、却输错登录密码的一方改掉原有绑定
+- 公钥不一致时：本连接通过 Mojang 验证（`mojangVerified`）则直接改绑到新设备（`RebindReason.ONLINE_MODE_IDENTITY`），否则须输对找回密码（`RebindReason.RECOVERY`）。`mojangVerified` 与 `onlineMode` 分开传入：正版服务器上 session 无效的连接 `onlineMode = true`、`mojangVerified = false`，按无验证回退
+- 改绑一律推迟到整个认证成功前才提交：已设登录密码时，登录密码也须验证通过，避免只掌握找回密码（或只掌握正版账号）、却输错登录密码的一方改掉原有绑定。`Accepted.reboundBy` 记录本次改绑原因，Finish 下发 `rebindNotice` 提示
 - 每种密码（登录 / 找回）在一个连接上各有 `maxPasswordAttempts` 次机会；找回成功后转入登录密码时次数重新计算。跨连接的锁定由 `AccountGateway.passwordFailed(…, exhausted)` 的实现负责
 - 可信握手完成前，拒绝原因只在内部和审计日志中使用；服务端对外统一使用配置的拒绝文本（模仿原版封禁或自定义）。服务端成功解密 ClientProof 并验证其对当前 transcript 的签名后，才允许提供具体原因；这只是模型 A 的协议验证边界，不代表公钥绑定、密码认证已经通过，更不能提前放行。具体错误的受保护传输格式另行定义。
 
@@ -214,6 +235,7 @@ CompletableFuture<Step> ◄─────────────────�
 | 2 | `wire` + `message` | 编解码测试全部通过 |
 | 3 | `crypto` | 通过 RFC 测试向量；冻结的已知答案向量；`AeadStream` / `SecureMessageChannel` 的隔离、篡改、重放、乱序、长度边界与使用上限测试通过 |
 | 4 | `session` 状态机 + 测试用内存账号存储 | 端到端握手和攻击场景测试通过 |
+| 4b | `core-client`：`PlayerKeyStore` + `PlayerKeyBackup` | 存储、导出 / 导入、篡改、截断、冲突与迁移测试通过 |
 | 5 | `PasswordHasher` + SQLite 存储 | 契约测试和迁移测试通过 |
 | 6 | `policy`、`status`、`config` | 策略测试通过；能生成带默认值的 JSON 配置 |
 | 7 | `TunnelFrameCodec` + 游戏阶段密码通道接入 | 隧道帧（长度 AAD、分片 / 合并、65536 字节上限、截断）和游戏阶段密码通道的测试通过 |

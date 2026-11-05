@@ -16,7 +16,7 @@ public enum RejectReason {
     CRYPTO_FAILURE,
     /** ClientProof 的签名无效。 */
     INVALID_PROOF,
-    /** 公钥与已绑定的不一致，且未设找回密码。 */
+    /** 未经 Mojang 验证的连接上，公钥与已绑定的不一致，且未设找回密码。 */
     KEY_MISMATCH,
     /** 登录或找回密码错误次数用尽。 */
     PASSWORD_ATTEMPTS_EXHAUSTED,

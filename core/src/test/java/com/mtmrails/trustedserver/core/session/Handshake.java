@@ -21,6 +21,7 @@ final class Handshake {
     String clientUsername = "Steve";
     String accountId = "steve";
     boolean onlineMode;
+    boolean mojangVerified;
     boolean wantTunnel;
     BiFunction<Channel, byte[], byte[]> toClient = (c, p) -> p;
     BiFunction<Channel, byte[], byte[]> toServer = (c, p) -> p;
@@ -39,7 +40,8 @@ final class Handshake {
 
     Handshake run() {
         SecureRandom random = new SecureRandom();
-        server = new ServerAuthSession(accountId, serverUsername, onlineMode, config, serverIdentity, accounts, random);
+        server = new ServerAuthSession(accountId, serverUsername, onlineMode, mojangVerified, config, serverIdentity,
+                accounts, random);
         clientSession = new ClientAuthSession(ADDRESS, clientUsername, wantTunnel, client, random);
         Outbound query = server.start();
         for (int round = 0; round < 32; round++) {
