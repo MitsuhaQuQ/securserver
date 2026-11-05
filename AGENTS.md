@@ -63,7 +63,10 @@ To avoid spam and auto exploit bots.
     - 容器格式见 [docs/CORE.md](docs/CORE.md)
 
 16. **正版玩家**：本连接通过 Mojang session 验证后视为连接可信。设备密钥不匹配（如换了电脑）也允许接入，服务端直接把绑定更新为新设备的密钥，并在 Finish 中下发“已更新认证绑定”的提示；不需要找回密码。Mojang 验证只保证连接可信，之后的玩家认证全部保留：设了登录密码仍须输入（通过后才改绑），受限账号仍提示设定密码，错误次数与锁定照常
-17. **invalid session 回退**：正版服务器上 session 无效（含 Mojang 会话服务器不可用）时不直接断开，按无验证回退，继续本 mod 的认证，规则与离线模式相同（密钥不匹配须用找回密码）
+17. **invalid session 回退**：正版服务器上 session 无效（含 Mojang 会话服务器不可用）时不直接断开，按无验证回退，继续本 mod 的认证，规则与离线模式相同（密钥不匹配须用找回密码）。账号与游戏内 UUID：
+    - 先按名字（不区分大小写）在本服账号中找正版玩家；找到则使用其账号与正版 UUID，但设备密钥必须匹配或输对找回密码（有多个同名记录时取最近登录的）
+    - 找不到则使用离线 UUID（`OfflinePlayer:<名字>`）新建账号
+    - 真正的正版玩家之后通过 Mojang 验证登录时，按第 16 条自动改绑，冒名者无法长期占用
 18. **服务端账号存储默认值**（均可在配置中修改）：
     - Argon2id：m = 19 MiB、t = 2、p = 1（OWASP 推荐下限）；最多 4 个线程同时哈希，排队上限 64，排满时新连接按“服务器繁忙”拒绝
     - 密码规则：6–128 个字符（按 Unicode 码点计）；登录密码与找回密码不能相同。不符合规则时：登录阶段重新弹出设定框，游戏内 `/passwd` 返回拒绝
@@ -89,8 +92,8 @@ To avoid spam and auto exploit bots.
 
 - 认证协议设计：[docs/PROTOCOL.md](docs/PROTOCOL.md)
 - 核心逻辑规划：[docs/CORE.md](docs/CORE.md)
+- Minecraft 适配层规划：[docs/ADAPTER.md](docs/ADAPTER.md)
 
 ## 待确认
 
 - 版本上限：暂定跟随最新正式版
-- invalid session 回退连接的账号 ID 与游戏内 UUID：无法取得可信的正版 UUID 时，按用户名查找哪个账号、在游戏中使用哪个 UUID（影响玩家数据归属，以及能否冒用已有正版玩家的名字）
