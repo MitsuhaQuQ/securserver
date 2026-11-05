@@ -7,7 +7,7 @@ import java.util.Arrays;
 import java.util.HexFormat;
 
 /** S→C，明文（PROTOCOL.md 4.1）。 */
-public record ServerHello(int[] versions, byte[] serverEphPub, byte[] serverNonce, int features)
+public record ServerHello(int[] versions, byte[] serverEphPub, byte[] serverNonce, int features, boolean onlineMode)
         implements AuthMessage {
     /** 服务端允许隧道模式。 */
     public static final int FEATURE_TUNNEL_AVAILABLE = 1;
@@ -72,7 +72,8 @@ public record ServerHello(int[] versions, byte[] serverEphPub, byte[] serverNonc
         out.varBytes(list.toByteArray(), Limits.MAX_VERSIONS * 2)
                 .fixed(serverEphPub)
                 .fixed(serverNonce)
-                .u32(features);
+                .u32(features)
+                .bool(onlineMode);
     }
 
     static ServerHello read(WireReader in) throws MalformedMessageException {
@@ -88,7 +89,8 @@ public record ServerHello(int[] versions, byte[] serverEphPub, byte[] serverNonc
         return new ServerHello(versions,
                 in.fixed(Limits.X25519_KEY_LENGTH),
                 in.fixed(Limits.NONCE_LENGTH),
-                in.u32());
+                in.u32(),
+                in.bool());
     }
 
     @Override
@@ -97,7 +99,8 @@ public record ServerHello(int[] versions, byte[] serverEphPub, byte[] serverNonc
                 && Arrays.equals(versions, other.versions)
                 && Arrays.equals(serverEphPub, other.serverEphPub)
                 && Arrays.equals(serverNonce, other.serverNonce)
-                && features == other.features;
+                && features == other.features
+                && onlineMode == other.onlineMode;
     }
 
     @Override
@@ -105,7 +108,8 @@ public record ServerHello(int[] versions, byte[] serverEphPub, byte[] serverNonc
         int h = Arrays.hashCode(versions);
         h = 31 * h + Arrays.hashCode(serverEphPub);
         h = 31 * h + Arrays.hashCode(serverNonce);
-        return 31 * h + features;
+        h = 31 * h + features;
+        return 31 * h + Boolean.hashCode(onlineMode);
     }
 
     @Override
@@ -114,6 +118,6 @@ public record ServerHello(int[] versions, byte[] serverEphPub, byte[] serverNonc
         return "ServerHello[versions=" + Arrays.toString(versions)
                 + ", serverEphPub=" + hex.formatHex(serverEphPub)
                 + ", serverNonce=" + hex.formatHex(serverNonce)
-                + ", features=0x" + Integer.toHexString(features) + "]";
+                + ", features=0x" + Integer.toHexString(features) + ", onlineMode=" + onlineMode + "]";
     }
 }

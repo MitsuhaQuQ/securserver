@@ -1,7 +1,9 @@
 # TrustedServer 认证协议设计
 
-> 协议版本：`1`（草案）
+> 协议版本：`2`（草案）
 > 需求与决策见 [AGENTS.md](../AGENTS.md)。本文只描述线上协议、密码学与状态机。
+
+当前协议按威胁模型 A 定义。威胁模型 B 仅作预留，规则暂未定义；不据此增加强制设密、禁止跳过或其他认证分支。现有登录密码、找回密码及 OP 必须设密规则仍按本文与 AGENTS.md 执行。
 
 ## 1. 总览
 
@@ -38,6 +40,13 @@
 
 断开提示使用配置的拒绝文本（默认模仿原版封禁提示）。
 
+### 拒绝提示的可信边界
+
+- 服务端成功解密 ClientProof 并验证玩家公钥对当前 transcript 的签名前，所有拒绝统一使用配置文本，不发送具体失败原因；包括版本不兼容、封禁、限流、超时和无效证明。
+- 上述验证通过后，视为模型 A 的可信协议握手完成，才允许提供密钥不匹配、找回方式等具体提示。这只证明对方完成协议并持有本次提交公钥对应的私钥，不证明其拥有既有账号；绑定核对、密码验证和 FinishAck 仍须按流程完成，之前不得放行。
+- 客户端自身检测到的服务端身份变化、签名错误或版本不兼容，可以在本地显示诊断；这不属于服务端向未可信连接发送详细拒绝原因。
+- 可信握手后的具体错误应通过受保护的通道发送；当前尚未定义其消息格式，不能借用明文断开消息传输这些详细原因。
+
 ## 2. 密码学原语
 
 只使用 Java 17 自带的实现，Argon2id 除外。
@@ -52,6 +61,14 @@
 | 密码哈希 | Argon2id | Bouncy Castle（shade 并裁剪，只打包服务端需要的类） |
 | 随机数 | `SecureRandom` | JDK |
 
+### 2.1 密码学编码与实现约束
+
+- X25519 公钥在线上为 RFC 7748 定义的 32 字节小端 u 坐标，不携带 X.509/DER 包装。输入按 RFC 7748 处理最高位及非规范坐标；运算结果全零或提供者拒绝该密钥时立即终止，不继续派生密钥。
+- Ed25519 使用 RFC 8032 的普通 Ed25519（不是 Ed25519ph/Ed25519ctx）：公钥为 32 字节压缩点，签名为 64 字节 `R || S`，不携带 DER 包装。非法点编码、越界的 S、无效签名必须拒绝；公钥解码与验签使用 JDK 实现，不自行实现椭圆曲线运算。
+- 以下公式中的字符串标签均为精确 ASCII 字节，无引号、无末尾 NUL、无长度前缀；`||` 表示直接拼接。用户名采用第 4.3 节的独立编码规则。
+- 每次连接双方各自新生成 X25519 临时密钥对和 32 字节随机 nonce，均使用 `SecureRandom`；禁止缓存复用临时密钥或会话密钥。长期 Ed25519 身份密钥不能用于 DH。
+- 标准依据：[RFC 7748](https://www.rfc-editor.org/rfc/rfc7748)、[RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)、[RFC 5869](https://www.rfc-editor.org/rfc/rfc5869)、[NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf)。帧大小、标签取值及使用上限是本项目的协议选择。
+
 ## 3. 身份与密钥
 
 ### 服务端身份密钥
@@ -65,6 +82,8 @@
 - Ed25519 密钥对，按 **（服务端身份公钥, 用户名）** 生成，每个服务器一把，避免跨服务器追踪
 - 以服务端身份公钥而不是服务器地址为索引，服务器换域名或 IP 后仍然有效
 - 客户端存放在 `config/trustedserver/keys/`。按决策不考虑物理接触，私钥明文保存，文件权限设为仅本用户可读
+- 客户端允许按“服务端身份公钥 + 用户名”导出、导入这一玩家认证密钥对，用于设备迁移或备份。该操作完全发生在本地，不产生协议消息，也不改变服务端已有公钥绑定；导入正确的旧密钥后可继续匹配原绑定，导入其他密钥仍按密钥不匹配流程处理
+- 备份不包含登录密码、找回密码、服务端身份私钥或 TOFU 信任决定。导入必须验证公私钥匹配和目标元数据；本地已有不同密钥时不得静默覆盖
 - 服务端记录方式（TOFU）：
   - 正版模式按 **UUID** 记录（用户名已由 Mojang 验证）
   - 离线模式按**小写用户名**记录
@@ -98,7 +117,10 @@ features       : u32 bitmask
                   bit0 TUNNEL_AVAILABLE  服务端允许隧道模式
                   bit1 TUNNEL_REQUIRED   服务端强制隧道模式（必须同时置位 bit0）
                   其余位必须为 0
+online_mode    : bool       服务端主动发送其实际 online-mode（0 = 离线，1 = 正版）
 ```
+
+客户端从 ServerHello 读取 `online_mode`，不自行猜测；服务端使用实际配置值，双方将同一值作为 transcript 中的 `online_mode_flag`（单字节 0 或 1）。该声明在 Challenge 的服务端身份签名验证通过后才被认证；它本身不是 Mojang 身份验证的证明。
 
 ### 4.2 ClientHello（C→S，明文，type=0x02）
 
@@ -109,48 +131,72 @@ client_nonce   : 32 bytes
 want_tunnel    : bool       客户端配置希望开启隧道
 ```
 
-没有共同版本时，客户端回答 `version = 0`，服务端以“版本不兼容”断开，并告知双方的版本号。
+没有共同版本时，客户端回答 `version = 0`，服务端记录内部原因“版本不兼容”，对外使用统一拒绝文本。客户端可根据收到的版本列表和本地支持列表，在本地提示版本不兼容并显示双方版本号。
 
 ### 4.3 会话密钥派生
 
 ```
-transcript_0 = SHA-256( ServerHello 字节 || ClientHello 字节 || username || online_mode_flag )
+transcript_0 = SHA-256( server_hello_payload || client_hello_payload || username_field || online_mode_flag )
 shared       = X25519(eph_priv, peer_eph_pub)        全零结果视为失败并断开
 prk          = HKDF-Extract(salt = server_nonce || client_nonce, ikm = shared)
-k_s2c        = HKDF-Expand(prk, "tsrv v1 auth s2c" || transcript_0, 32)
-k_c2s        = HKDF-Expand(prk, "tsrv v1 auth c2s" || transcript_0, 32)
-k_tun_s2c    = HKDF-Expand(prk, "tsrv v1 tunnel s2c" || transcript_0, 32)
-k_tun_c2s    = HKDF-Expand(prk, "tsrv v1 tunnel c2s" || transcript_0, 32)
-k_pw_s2c     = HKDF-Expand(prk, "tsrv v1 password s2c" || transcript_0, 32)
-k_pw_c2s     = HKDF-Expand(prk, "tsrv v1 password c2s" || transcript_0, 32)
+k_s2c        = HKDF-Expand(prk, "tsrv v2 auth s2c" || transcript_0, 32)
+k_c2s        = HKDF-Expand(prk, "tsrv v2 auth c2s" || transcript_0, 32)
+k_tun_s2c    = HKDF-Expand(prk, "tsrv v2 tunnel s2c" || transcript_0, 32)
+k_tun_c2s    = HKDF-Expand(prk, "tsrv v2 tunnel c2s" || transcript_0, 32)
+k_pw_s2c     = HKDF-Expand(prk, "tsrv v2 password s2c" || transcript_0, 32)
+k_pw_c2s     = HKDF-Expand(prk, "tsrv v2 password c2s" || transcript_0, 32)
 ```
 
-`k_pw_*` 只用于密码通道 `trustedserver:password`，与认证通道的密钥互不复用。密码通道的序号从登录阶段一直延续到游戏阶段，不清零，所以登录阶段的密码消息无法在游戏阶段被重放。
+#### 4.3.1 transcript 与派生输入
 
-username 和正版/离线标志写进 transcript，防止中间人改用户名或降级模式。
+- `server_hello_payload` / `client_hello_payload` 是实际发送或收到并已严格校验的完整 payload，包含 `TSRV | type | body`；不包含 Minecraft 包长度、频道名或 transaction id。不得用另一种序列化形式替代收到的字节。
+- `username_field = VarInt(UTF-8 字节数) || UTF-8(username)`，采用第 4 节的最短 VarInt 与严格 UTF-8。用户名取本次原版登录 Hello 中的原始字符串，保留大小写、不做 Unicode 归一化；服务端保存这一值供握手使用。它与离线账号查询所用的小写索引是两回事。
+- `online_mode_flag` 为 ServerHello 中 `online_mode` 的单字节编码：`00` 或 `01`；服务端必须发送实际配置值。该字段虽已包含在 Hello 中，仍按公式再拼接一次，以保留明确的上下文绑定。
+- `transcript_0` 是 32 字节 SHA-256 原始摘要，不是十六进制字符串。Hello 的版本、模式、功能位、公钥及 nonce 因此都受签名保护。
+- salt 为服务端 nonce 在前、客户端 nonce 在后的 64 字节；共享秘密使用 X25519 返回的原始 32 字节。HKDF 按 RFC 5869 的 Extract 后 Expand 执行，六个输出各 32 字节，禁止直接把 DH 输出作为 AES 密钥。
+- 签名输入为第 4.4 / 4.5 节的 ASCII 标签加原始摘要；直接交给普通 Ed25519 签名，不额外做预哈希。
 
-之后的认证消息封装为：
+#### 4.3.2 AEAD 封装
+
+认证与密码通道统一采用以下格式：
 
 ```
-magic | type | AEAD(k_dir, nonce = 4 字节方向标签 || u64 序号, plaintext, aad = magic||type)
+header    = ASCII("TSRV") || u8(type)               // 5 字节
+nonce     = direction_tag || u64be(sequence)       // 12 字节，仅本地构造
+ciphertext_and_tag = AES-256-GCM(key, nonce, body, aad = header)
+payload   = header || ciphertext_and_tag
 ```
 
-每个方向的序号从 0 开始单调递增，出现重复或乱序即断开。
+- JDK 算法为 `AES/GCM/NoPadding`，密钥 256 位，认证标签固定为 128 位（16 字节），输出顺序为密文在前、标签在后。不使用填充。
+- 方向标签固定为：S→C = `53 32 43 00`（`S2C` 后接零字节），C→S = `43 32 53 00`（`C2S` 后接零字节）。发送端与接收端按同一个线上方向选标签，不按本地“发送/接收”命名。
+- nonce 与序号不在线上传输。接收端只使用本地预期序号解密，不尝试前后序号或其他密钥。重放、丢帧后的错位、乱序均导致认证失败并断开。
+- 每个用途、每个方向独立维护序号：auth / password / tunnel × S→C / C→S，共六条计数流，均从 0 开始。不同用途绝不共享密钥；相同方向标签可在不同密钥下使用。
+- 单条完整 payload 最多 4096 字节，因此加密消息体最多 `4096 - 5 - 16 = 4075` 字节。即使各字段分别符合上限，聚合后超限也必须拒绝；Finish 的 notices 同样受此总上限约束。
+- 解密前先检查总长度、magic、频道与 type；解密成功后才解码消息体并执行状态转换。GCM 标签验证完成前，不得把任何明文交给密码校验、数据库或游戏逻辑。
+
+#### 4.3.3 序号、使用上限与失败处理
+
+- 同一条计数流必须串行处理。发送方成功 seal 后消耗一个序号，接收方成功 open 后消耗一个序号；数据写出失败、密码学异常、无效消息体或状态不符都终止连接，不回退序号重试。
+- 密码通道在登录到游戏阶段交接时移交同一个通道状态，不得仅复制密钥并重置计数。启用隧道也不影响密码通道，其消息继续独立加密。
+- 每把密钥最多保护 `2^24` 条记录、累计最多 `2^36` 字节明文（64 GiB），任一上限即将被超过时，在处理该记录前断开。双端分别记录并检查相同的计数；空消息也计一条记录。这里的记录在 auth/password 中是一条消息，在 tunnel 中是一帧。
+- 序号编码为无符号 u64 大端，但上述记录上限先于 u64 耗尽触发。禁止溢出回绕；不支持会话内重新协商密钥，重新连接时生成全新临时密钥和 nonce。
+- 标签验证失败后永久废弃本次连接的所有通道，不允许继续试解密，不降级到明文。对外仅使用统一拒绝文本或直接关闭连接；即使此前握手可信，也不通过已失去同步的加密通道发送详细错误。
+- DH 共享秘密和 HKDF 中间值在派生后尽快释放并尽力清零可变缓冲区；会话结束释放会话密钥及临时私钥。不得写入日志或持久化；Java/JCA 对象不保证所有内部副本可立即擦除。
 
 ### 4.4 Challenge（S→C，加密，type=0x03）
 
 ```
 server_id_pub  : 32 bytes   服务端 Ed25519 身份公钥
-server_sig     : 64 bytes   Sign(server_id, "tsrv v1 server" || transcript_0)
+server_sig     : 64 bytes   Sign(server_id, "tsrv v2 server" || transcript_0)
 ```
 
-客户端用 TOFU 记录核对 `server_id_pub` 并验证签名，然后以它为索引找到（或新生成）玩家密钥。
+客户端先验证签名，再用 TOFU 记录核对 `server_id_pub`；首次记录只能在签名通过后写入，已有记录变化必须经过明确确认。通过服务端身份检查后，才以它为索引找到（或新生成）玩家密钥并发送 ClientProof；此前不显示密码输入请求、不发送任何密码。
 
 ### 4.5 ClientProof（C→S，加密，type=0x04）
 
 ```
 player_pub     : 32 bytes
-player_sig     : 64 bytes   Sign(player_key, "tsrv v1 client" || transcript_0)
+player_sig     : 64 bytes   Sign(player_key, "tsrv v2 client" || transcript_0)
 ```
 
 ### 4.6 服务端判定
@@ -218,11 +264,21 @@ notices        : string × notice_count   客户端进服后要显示的提示�
 - 在 Netty 管线的最外层（原版 `encrypt` / `decrypt` 处理器的位置）插入隧道编解码器：
   - 离线模式：新增这两个处理器
   - 正版模式：替换掉原版的 AES-CFB8 处理器
-- 帧格式：`VarInt 长度 || AES-256-GCM(k_tun_dir, nonce = 方向标签 || u64 序号, 原始字节块)`。序号耗尽前断开连接
+- 隧道传输 Minecraft 编码后的原始字节流，不以 Minecraft 包为帧边界；接收端按顺序拼接解密结果。单个 Minecraft 包可以拆为多帧。
+- 单帧明文长度为 1–65536 字节；不发送空帧。令 `L = 明文长度 + 16`（密文与 GCM 标签总长度），帧格式与 AAD 固定为：
+
+  ```
+  length_bytes = 最短 VarInt(L)
+  aad          = ASCII("tsrv v2 tunnel frame") || length_bytes
+  frame        = length_bytes || AES-256-GCM(k_tun_dir, nonce, plaintext, aad)
+  ```
+
+- `L` 必须在 17–65552 之间，长度前缀最多 3 字节；分配帧缓冲前即校验范围和最短编码。未收齐一帧时等待后续字节；EOF 时存在残帧视为截断。长度前缀参与认证，但只有收齐并验证标签后才能确认其完整性。
+- nonce、标签长度、序号及每密钥使用上限遵循第 4.3 节。隧道第一帧使用序号 0；隧道帧不受认证 payload 的 4096 字节限制。
 - 切换时机：
-  - 客户端发出 FinishAck 后立刻安装编解码器
-  - 服务端收到 FinishAck 后、发送下一个包之前安装
-  - 登录阶段客户端在收到服务端下一个包之前不会再发包，所以不会有新旧加密混在同一个缓冲区里，与原版启用加密的时序一致
+  - FinishAck 仍经旧传输方式完整编码；客户端在同一连接事件循环中将其排入旧编码链路后，原子切换后续出站字节及入站解码器。切换完成前禁止后续应用数据写出。
+  - 服务端完整解码并验证 FinishAck 后、发送任何后续包之前，原子切换双向编解码器。隧道开启后的首个字节必须属于隧道帧。
+  - 适配层必须处理 TCP 分片、合并读取及旧解码器残留缓冲，按协议边界移交尚未消费的字节；不得假定一次网络读取恰好对应一个包。若不能保证边界，关闭连接，不尝试猜测新旧格式。
 - 兼容性：隧道会改变线上字节格式，所以只在双方都装了本 mod 时启用；由于不支持代理，不存在中间层解析的问题
 
 ## 6. 游戏阶段的安全通道（`/passwd`、`/recoverypasswd`）
@@ -304,6 +360,8 @@ CREATE TABLE audit_log (
 ```
 
 ## 10. 协议版本规则（关键版本机制）
+
+- 草案 v2：ServerHello 新增 `online_mode` 字段；与旧 v1 格式不兼容，当前实现只支持 v2。密钥派生和签名的域标签同步使用 `tsrv v2`。
 
 - 协议版本号（u16）**只在**线上格式、密码学或状态机发生变化时加 1，与 mod 版本号无关
 - mod 的小版本没有改动核心验证部分时，协议版本不变，新旧客户端和服务端可以互相连接

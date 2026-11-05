@@ -27,8 +27,8 @@ class MessageCodecTest {
     static List<Message> samples() {
         return List.of(
                 new ServerHello(new int[] {2, 1}, filled(32, 1), filled(32, 2),
-                        ServerHello.FEATURE_TUNNEL_AVAILABLE | ServerHello.FEATURE_TUNNEL_REQUIRED),
-                new ServerHello(new int[] {1}, filled(32, 3), filled(32, 4), 0),
+                        ServerHello.FEATURE_TUNNEL_AVAILABLE | ServerHello.FEATURE_TUNNEL_REQUIRED, true),
+                new ServerHello(new int[] {1}, filled(32, 3), filled(32, 4), 0, false),
                 new ClientHello(1, filled(32, 5), filled(32, 6), true),
                 new ClientHello(0, filled(32, 7), filled(32, 8), false),
                 new Challenge(filled(32, 9), filled(64, 10)),
@@ -189,13 +189,13 @@ class MessageCodecTest {
     @Test
     void validationRules() {
         assertThrows(IllegalArgumentException.class,
-                () -> new ServerHello(new int[] {1}, filled(32, 0), filled(32, 0), ServerHello.FEATURE_TUNNEL_REQUIRED));
+                () -> new ServerHello(new int[] {1}, filled(32, 0), filled(32, 0), ServerHello.FEATURE_TUNNEL_REQUIRED, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new ServerHello(new int[] {1}, filled(32, 0), filled(32, 0), 1 << 5));
+                () -> new ServerHello(new int[] {1}, filled(32, 0), filled(32, 0), 1 << 5, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new ServerHello(new int[0], filled(32, 0), filled(32, 0), 0));
+                () -> new ServerHello(new int[0], filled(32, 0), filled(32, 0), 0, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new ServerHello(new int[] {0}, filled(32, 0), filled(32, 0), 0));
+                () -> new ServerHello(new int[] {0}, filled(32, 0), filled(32, 0), 0, false));
         assertThrows(IllegalArgumentException.class, () -> new Challenge(filled(31, 0), filled(64, 0)));
         assertThrows(IllegalArgumentException.class, () -> new PasswordRequest(PasswordRequest.Kind.SET, 1, 60));
         assertThrows(IllegalArgumentException.class, () -> new PasswordRequest(PasswordRequest.Kind.LOGIN, 3, 0));
@@ -203,6 +203,18 @@ class MessageCodecTest {
         assertThrows(IllegalArgumentException.class, () -> new SetRecoveryPassword(""));
         assertTrue(new PasswordAnswer("").skipped());
         assertFalse(new PasswordAnswer("x").skipped());
+    }
+
+    @Test
+    void serverHelloRequiresCanonicalOnlineModeFlag() throws Exception {
+        for (boolean onlineMode : new boolean[] {false, true}) {
+            ServerHello hello = new ServerHello(new int[] {2}, filled(32, 1), filled(32, 2), 0, onlineMode);
+            byte[] payload = MessageCodec.encodePlain(hello);
+            assertEquals(onlineMode ? 1 : 0, payload[payload.length - 1]);
+            assertEquals(hello, MessageCodec.decodePlain(Channel.AUTH, payload));
+            payload[payload.length - 1] = 2;
+            assertThrows(MalformedMessageException.class, () -> MessageCodec.decodePlain(Channel.AUTH, payload));
+        }
     }
 
     @Test
@@ -234,7 +246,7 @@ class MessageCodecTest {
         assertEquals(0, challenge.serverIdPub()[0]);
 
         int[] versions = {1};
-        ServerHello hello = new ServerHello(versions, filled(32, 0), filled(32, 0), 0);
+        ServerHello hello = new ServerHello(versions, filled(32, 0), filled(32, 0), 0, false);
         versions[0] = 7;
         hello.versions()[0] = 7;
         assertArrayEquals(new int[] {1}, hello.versions());

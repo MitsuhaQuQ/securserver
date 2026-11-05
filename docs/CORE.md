@@ -5,6 +5,7 @@
 
 ## 1. 原则
 
+- **威胁模型范围**：当前只实现模型 A；模型 B 仅作预留，规则暂未定义，不提供启用配置，也不推定其额外认证策略。现有密码功能仍按既定规则实现。
 - **与 Minecraft 无关**：core 层不引用任何 Minecraft、加载器或 Netty 类型，只处理 `byte[]`。所有版本、所有加载器共用同一份代码，也能在普通 JUnit 中完整测试
 - **纯状态机**：认证流程实现为“输入字节 → 输出字节和判定”的状态机，不碰网络 IO。时间（`Clock`）和随机数（`SecureRandom`）从外部注入，测试可以完全复现
 - **不阻塞网络线程**：Argon2id 和 SQLite 都是慢操作，统一放到专用线程池，状态机以 `CompletableFuture` 返回结果
@@ -94,8 +95,11 @@ com.mtmrails.trustedserver.server
 com.mtmrails.trustedserver.client
 ├── KnownServers                     服务器地址 → 服务端身份公钥（TOFU），检测公钥变化
 ├── PlayerKeyStore                   (服务端身份公钥, 用户名) → 玩家 Ed25519 密钥对；文件权限设为仅本人可读
+├── PlayerKeyBackup                  单个玩家认证密钥的导入导出；校验密钥对与目标元数据，冲突时要求上层明确确认
 └── PasswordPrompt                   接口：由 common 层用 GUI 实现，返回 CompletableFuture<Optional<String>>
 ```
+
+密钥备份仅包含指定“服务端身份公钥 + 用户名”下用于 `ClientProof` 的玩家 Ed25519 密钥对及识别该目标所需的元数据，不导出密码、KnownServers 的信任决定或服务端身份私钥。`core-client` 负责解析、完整性校验和冲突检测；文件选择、冲突确认及安全警告由后续 common 客户端界面负责。导出容器格式和备份密码保护方案在实现该模块前单独确定。
 
 ## 4. 关键接口草图
 
@@ -116,7 +120,7 @@ public sealed interface Step {
     record Done(AuthOutcome outcome) implements Step {}      // 结束：放行或断开
 }
 
-// 客户端
+// 客户端：onlineMode 从服务端 ServerHello 读取，参与 transcript 计算
 public final class ClientAuthSession {
     ClientAuthSession(String serverAddress, String username, boolean wantTunnel,
                       KnownServers known, PlayerKeyStore keys, PasswordPrompt prompt,
@@ -134,7 +138,7 @@ public final class PasswordChannel {
 
 - 状态机内部用枚举记录当前状态，收到当前状态不期望的消息类型，一律判为 `PROTOCOL_ERROR`
 - 状态机本身不处理超时；超时由 common 层计时，到点后调用 `session.timeout()` 得到 `Rejected(TIMEOUT)`
-- 拒绝原因只在内部和审计日志中使用；发给客户端的文本统一由配置决定（模仿原版封禁或自定义），未装 mod 的连接看不出差别
+- 可信握手完成前，拒绝原因只在内部和审计日志中使用；服务端对外统一使用配置的拒绝文本（模仿原版封禁或自定义）。服务端成功解密 ClientProof 并验证其对当前 transcript 的签名后，才允许提供具体原因；这只是模型 A 的协议验证边界，不代表公钥绑定、密码认证已经通过，更不能提前放行。具体错误的受保护传输格式另行定义。
 
 ## 5. 线程模型
 
@@ -169,6 +173,7 @@ CompletableFuture<Step> ◄─────────────────�
 ## 7. 测试计划
 
 - **标准测试向量**：HKDF 用 RFC 5869，X25519 用 RFC 7748，Ed25519 用 RFC 8032
+- **加密边界**：冻结完整 Hello → transcript → 六把密钥 → 首条密文的已知答案向量；测试方向/用途隔离、header 篡改、无效标签、空消息、4075 字节消息体边界、使用上限及失败后不可复用。隧道另测长度 AAD、分片/合并、65536 字节帧上限和截断；密码通道测试跨阶段计数连续。
 - **编解码**：每种消息都做往返测试（编码再解码应得到原值）；截断、超长、未知 type、错误 magic 都必须抛异常；配合模糊测试
 - **端到端握手**：客户端和服务端状态机在内存中直接对接，覆盖以下场景：
   - 新用户：在 SET 提示框中设定密码 → 不受限；点跳过 → 受限
@@ -183,6 +188,7 @@ CompletableFuture<Step> ◄─────────────────�
   - 重放、乱序 → 失败
   - 密码消息出现在认证通道 → 断开
   - 登录阶段的密码消息在游戏阶段重放 → 失败
+- **客户端密钥备份**：导出后导入可恢复同一公钥；目标服务端身份或用户名不匹配、私钥与公钥不匹配、截断和篡改文件均拒绝；已有不同密钥只报告冲突，不由 core 静默覆盖
 - **策略**：限流和锁定的时间窗口（注入可控的 `Clock`）；伪造人数的各种配置
 - **存储**：SQLite 实现和内存实现跑同一套契约测试；测试表结构迁移
 
