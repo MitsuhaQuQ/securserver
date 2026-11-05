@@ -25,6 +25,15 @@ dependencies {
     "include"("org.xerial:sqlite-jdbc:3.46.1.0")
 }
 
+loom {
+    runs {
+        // 开发运行时立即应用全部 mixin，尽早发现注入点错误
+        configureEach {
+            vmArg("-Dtrustedserver.auditMixins=true")
+        }
+    }
+}
+
 tasks.processResources {
     inputs.property("version", project.version)
     filesMatching("fabric.mod.json") {

@@ -114,7 +114,7 @@ com.mtmrails.trustedserver.server
 
 ```
 com.mtmrails.trustedserver.client
-├── KnownServers                     服务器地址 → 服务端身份公钥（TOFU），检测公钥变化
+├── KnownServers                     服务器地址 → 服务端身份公钥（TOFU），文本文件；损坏时报错，绝不静默丢弃信任记录
 ├── KeyTarget / StoredKey            密钥定位（服务端身份公钥 + 原始用户名）与一把密钥
 ├── PlayerKeyStore                   每个定位一个文件，文件名为定位的 SHA-256；带校验和，原子写入，POSIX 下仅本人可读写；
 │                                    损坏即报错、绝不静默重新生成；list() 供导出界面；importKey() 冲突时不覆盖

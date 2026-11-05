@@ -3,9 +3,19 @@
   "minVersion": "0.8",
   "package": "com.mtmrails.trustedserver.fabric.mixin",
   "compatibilityLevel": "JAVA_17",
-  "mixins": [],
-  "server": [],
-  "client": [],
+  "mixins": [
+    "LegacyQueryHandlerMixin",
+    "ServerLoginHelloMixin",
+    "ServerLoginPacketListenerAccessor",
+    "ServerLoginTimeoutMixin",
+    "ServerStatusPacketListenerMixin"
+  ],
+  "server": [
+    "QueryThreadGs4Mixin"
+  ],
+  "client": [
+    "ClientHandshakePacketListenerAccessor"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

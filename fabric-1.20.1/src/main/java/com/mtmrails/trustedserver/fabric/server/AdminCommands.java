@@ -1,0 +1,83 @@
+package com.mtmrails.trustedserver.fabric.server;
+
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.context.CommandContext;
+import com.mtmrails.trustedserver.server.account.AdminResult;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
+
+/**
+ * 控制台管理员命令（PROTOCOL.md 第 6 节）。只允许控制台使用：来源不能是实体，且须有最高权限等级。
+ *
+ * <pre>
+ * trustedserver fingerprint
+ * trustedserver reset key &lt;玩家&gt;
+ * trustedserver reset all &lt;玩家&gt;
+ * </pre>
+ */
+final class AdminCommands {
+    private AdminCommands() {
+    }
+
+    static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("trustedserver")
+                .requires(source -> source.getEntity() == null && source.hasPermission(4))
+                .then(Commands.literal("fingerprint").executes(ctx -> {
+                    TrustedServerRuntime runtime = TrustedServerRuntime.get();
+                    ctx.getSource().sendSuccess(() -> Component.literal("Server identity fingerprint: "
+                            + (runtime == null ? "unavailable" : runtime.fingerprint())), false);
+                    return 1;
+                }))
+                .then(Commands.literal("reset")
+                        .then(Commands.literal("key").then(Commands.argument("player", StringArgumentType.word())
+                                .executes(ctx -> run(ctx, "reset key", r -> r.accounts().resetKey(accountId(ctx))))))
+                        .then(Commands.literal("all").then(Commands.argument("player", StringArgumentType.word())
+                                .executes(ctx -> run(ctx, "reset all", r -> r.accounts().resetAll(accountId(ctx))))))));
+    }
+
+    private static int run(CommandContext<CommandSourceStack> ctx, String action,
+            Function<TrustedServerRuntime, CompletableFuture<AdminResult>> operation) {
+        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        CommandSourceStack source = ctx.getSource();
+        if (runtime == null) {
+            source.sendFailure(Component.literal("TrustedServer is not active"));
+            return 0;
+        }
+        String player = StringArgumentType.getString(ctx, "player");
+        MinecraftServer server = source.getServer();
+        operation.apply(runtime).whenComplete((result, error) -> server.execute(() -> {
+            if (error != null) {
+                source.sendFailure(Component.literal(action + " failed: " + error.getMessage()));
+            } else if (result == AdminResult.NO_SUCH_ACCOUNT) {
+                source.sendFailure(Component.literal("No TrustedServer account for " + player));
+            } else {
+                source.sendSuccess(() -> Component.literal(action + " done for " + player), true);
+            }
+        }));
+        return 1;
+    }
+
+    /** 正版服务器上按 UUID 或名字（经本地玩家缓存）解析；离线服务器用小写名字。 */
+    private static String accountId(CommandContext<CommandSourceStack> ctx) {
+        String player = StringArgumentType.getString(ctx, "player");
+        MinecraftServer server = ctx.getSource().getServer();
+        if (!server.usesAuthentication()) {
+            return player.toLowerCase(Locale.ROOT);
+        }
+        try {
+            return UUID.fromString(player).toString();
+        } catch (IllegalArgumentException notUuid) {
+            Optional<UUID> id = server.getProfileCache() == null ? Optional.empty()
+                    : server.getProfileCache().get(player).map(p -> p.getId());
+            return id.map(UUID::toString).orElse(player.toLowerCase(Locale.ROOT));
+        }
+    }
+}

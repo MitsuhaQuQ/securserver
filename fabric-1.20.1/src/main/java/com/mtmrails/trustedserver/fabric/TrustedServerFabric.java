@@ -13,5 +13,10 @@ public final class TrustedServerFabric implements ModInitializer {
     @Override
     public void onInitialize() {
         LOGGER.info("TrustedServer loaded (auth protocol v{})", ProtocolVersion.CURRENT);
+        // 仅开发时使用：立即应用全部 mixin，注入点写错会在这里直接报错，而不是等到对应的类被加载时
+        if (Boolean.getBoolean("trustedserver.auditMixins")) {
+            org.spongepowered.asm.mixin.MixinEnvironment.getCurrentEnvironment().audit();
+            LOGGER.info("Mixin audit finished");
+        }
     }
 }

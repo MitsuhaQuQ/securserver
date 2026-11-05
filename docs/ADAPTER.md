@@ -16,8 +16,8 @@
 
 | 环节 | 接入方式 |
 |---|---|
-| 登录 query 收发 | Fabric API `ServerLoginNetworking` / `ServerLoginConnectionEvents.QUERY_START`；用 `LoginSynchronizer.waitFor` 推迟放行，直到认证结束 |
-| 握手前拦截 | `QUERY_START` 时：`ConnectionGate.beginLogin`、封禁（`PlayerList.canPlayerLogin`）、账号与 IP 锁定 |
+| 登录 query 收发 | Fabric API `ServerLoginNetworking` / `ServerLoginConnectionEvents.QUERY_START`。开始时登记一个只在“放行”时才完成的 future：Fabric 在“没有等待中的 future 且没有在途 query”时就会放行，而在途 query 要等实际写出后才登记，逐轮补发会留下提前放行的窗口 |
+| 握手前拦截 | 两段：收到登录 Hello 时（Mojang 验证之前，mixin）做 `ConnectionGate.beginLogin` 与 IP 封禁，使所有登录连接都计入限流；`QUERY_START`（验证之后）做名字 / UUID 封禁与账号锁定 |
 | 拒绝提示 | `disconnect(Component.translatable("multiplayer.disconnect.banned"))` 或自定义文本 |
 | 登录超时 | Mixin 放宽 `ServerLoginPacketListenerImpl` 的 600 tick 限制，并由我们按配置计时 |
 | invalid session 回退 | Mixin 拦截 Mojang 验证失败时的断开，改为按第 17 条确定账号与 UUID 后继续 |
@@ -40,7 +40,50 @@
 | 进服提示 | 进入游戏后在聊天栏显示 Finish 的 notices |
 | 导出 / 导入认证 | Mod Menu 设置界面中的按钮（`PlayerKeyBackup`） |
 
-## 4. 实施顺序
+## 4. 第一阶段：防自动扫描机器人
+
+先只做威胁模型 A 的核心防线，让服务器在不改变玩家体验的前提下拦住扫描器与自动漏洞利用：
+
+| 包含 | 说明 |
+|---|---|
+| 强制协议握手 | 没装 mod、协议错误、超时的连接以统一拒绝文本断开，进不了配置 / 游戏阶段 |
+| 握手前拦截 | `ConnectionGate` 限流（共享出口友好）、原版封禁、账号与 IP 锁定 |
+| 服务器列表脱敏 | 清空玩家样本、人数按配置、旧版 Ping 同样处理与限流、强制关闭 query |
+| 服务端身份与配置 | 身份密钥、`server.json`、启动时打印指纹 |
+| 客户端最小实现 | 应答握手、TOFU 记录、玩家密钥；进服后显示 notices |
+
+| 推迟 | 第一阶段的处理 |
+|---|---|
+| 密码界面 | SET 一律按“跳过”回答；遇到 LOGIN / RECOVERY 时客户端本地提示“暂不支持”并断开（第一阶段无法设密码，正常不会出现） |
+| 服务端公钥变更确认界面 | 默认拒绝并在断开界面说明 |
+| 受限 / OP 暂停 / 游戏内 `/passwd` | 不生效（账号仍按规则记为受限，后续阶段上线后再提示设密码） |
+| 隧道模式 | 强制关闭；配置为 optional / required 时打印警告 |
+| invalid session 回退 | 保持原版行为（直接断开），是安全的默认 |
+| 导出 / 导入按钮 | 后续阶段 |
+
+### 4.1 第一阶段的实现与验证
+
+- 服务端：`TrustedServerRuntime`（配置、身份、账号服务、限流、人数显示）、`LoginFlow`（每个登录连接一个）、控制台命令 `trustedserver fingerprint | reset key <玩家> | reset all <玩家>`；mixin：Hello 阶段拦截、登录超时、新版 / 旧版 Ping、关闭 query
+- 客户端：`ClientLoginHandler`、`FabricClientEnvironment`（`KnownServers` + `PlayerKeyStore`，位于 `config/trustedserver/`）；本地失败直接断开并在断开界面说明原因
+- 版本不兼容时客户端直接本地断开并显示双方版本，而不是先回答 `version = 0` 再等服务端断开：后者只会让玩家看到统一拒绝文本
+- 开发运行默认带 `-Dtrustedserver.auditMixins=true`，启动时立即应用全部 mixin，注入点错误会直接报出
+- `tools/probe_server.py`：只用标准库模拟扫描器 / 机器人，检查 Ping 脱敏、旧版 Ping、机器人登录被拒、Ping 限流
+
+### 4.2 第一阶段实测（开发服务端，离线模式，`tools/probe_server.py`）
+
+| 检查 | 结果 |
+|---|---|
+| 新版服务器列表 Ping | 玩家样本为空，人数 0/20 |
+| 旧版 Ping | 正常回复，人数 0/20 |
+| 机器人登录（对 `trustedserver:auth` 回答“不理解”） | 被 `{"translate":"multiplayer.disconnect.banned"}` 断开，与真实封禁一致 |
+| 同一地址连续 11 次机器人登录 | 前 10 次在握手处被拒；第 11 次在 Hello 阶段即被拒，收不到握手请求 |
+| 连续 Ping | 与前两项合计第 20 次后被断开（Ping 额度可连发 20 次） |
+
+实测中修正：离线模式下 `QUERY_START` 时玩家资料尚无 UUID，现按原版规则（`OfflinePlayer:<名字>`）提前算出，用于封禁检查与会话登记。
+
+**已知信息泄露（待决定）**：在本 mod 的握手之前，Fabric API 自身会先发出 `fabric-networking-api-v1:early_registration` 与 `fabric:custom_ingredient_sync` 两条登录 query，机器人可据此判断服务器使用 Fabric。客户端尚未实测（需要图形界面）。
+
+## 5. 实施顺序
 
 | 步骤 | 内容 | 完成标准 |
 |---|---|---|
