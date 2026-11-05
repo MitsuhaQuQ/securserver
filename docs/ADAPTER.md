@@ -68,6 +68,7 @@
 - 版本不兼容时客户端直接本地断开并显示双方版本，而不是先回答 `version = 0` 再等服务端断开：后者只会让玩家看到统一拒绝文本
 - 开发运行默认带 `-Dtrustedserver.auditMixins=true`，启动时立即应用全部 mixin，注入点错误会直接报出
 - `tools/probe_server.py`：只用标准库模拟扫描器 / 机器人，检查 Ping 脱敏、旧版 Ping、机器人登录被拒、Ping 限流
+- `tools/ProbeClient.java`：用核心层完成真实认证握手的无界面客户端（`java -cp core.jar:core-client.jar tools/ProbeClient.java`），验证认证通过后的完整登录路径
 
 ### 4.2 第一阶段实测（开发服务端，离线模式，`tools/probe_server.py`）
 
@@ -81,7 +82,15 @@
 
 实测中修正：离线模式下 `QUERY_START` 时玩家资料尚无 UUID，现按原版规则（`OfflinePlayer:<名字>`）提前算出，用于封禁检查与会话登记。
 
-**已知信息泄露（待决定）**：在本 mod 的握手之前，Fabric API 自身会先发出 `fabric-networking-api-v1:early_registration` 与 `fabric:custom_ingredient_sync` 两条登录 query，机器人可据此判断服务器使用 Fabric。客户端尚未实测（需要图形界面）。
+**隐藏其他登录 query**：Fabric API 自身会在登录阶段发出 `fabric-networking-api-v1:early_registration`、`fabric:custom_ingredient_sync` 等 query，机器人可据此判断服务器使用 Fabric。现在认证通过之前，所有非本 mod 的登录 query 都被扣下（`Connection.send` 的 mixin + `LoginFlow.holdOutgoing`）；通过时按原顺序补发后才放行，被拒时丢弃并释放缓冲。Fabric 在发送时同步登记在途 query，因此先补发、再完成“认证完成” future，Fabric 会等这些 query 的回答后才接受玩家。
+
+| 检查 | 结果 |
+|---|---|
+| 机器人登录 | 握手前只看到 `trustedserver:auth`，随后被统一拒绝文本断开 |
+| `tools/ProbeClient.java`（用核心层完成真实握手、无图形界面）：新玩家 | 握手完成后才收到两条 Fabric query，回答“不理解”后登录成功，服务端显示玩家进入游戏 |
+| 同上：老玩家（同名、同一把密钥） | 密钥匹配；账号仍受限，再次提示设定密码（按第一阶段规则跳过），登录成功 |
+
+图形界面客户端仍未实测。
 
 ## 5. 实施顺序
 

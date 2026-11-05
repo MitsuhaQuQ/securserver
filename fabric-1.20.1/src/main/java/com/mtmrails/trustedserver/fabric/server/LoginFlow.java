@@ -11,6 +11,12 @@ import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
 import com.mtmrails.trustedserver.fabric.mixin.ServerLoginPacketListenerAccessor;
 import com.mtmrails.trustedserver.server.policy.ConnectionGate;
 import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.List;
+import net.minecraft.network.Connection;
+import net.minecraft.network.PacketSendListener;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.core.UUIDUtil;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
@@ -33,6 +39,9 @@ import net.minecraft.server.network.ServerLoginPacketListenerImpl;
  * <p>分两段：收到登录 Hello 时（Mojang 验证之前）先做限流与 IP 封禁检查，使所有登录连接都计入限流；
  * Fabric 的 QUERY_START（验证之后，已知可信 UUID）再做名字 / UUID 封禁、账号锁定和协议握手。
  *
+ * <p>认证通过之前，其他登录 query（Fabric API 自身的、其他 mod 的）一律扣下，机器人在握手前只能看到本 mod 的
+ * query，无从判断服务器使用的加载器与 mod；认证通过时按原顺序补发后才放行，被拒时丢弃。
+ *
  * <p>状态机的调用都在 {@link #lock} 内进行；其异步部分在账号服务的线程上完成后再回到这里。
  */
 public final class LoginFlow {
@@ -51,6 +60,12 @@ public final class LoginFlow {
     private boolean done;
     private boolean gateReported;
     private AuthOutcome.Accepted accepted;
+    /** 认证通过前扣下的其他登录 query，按发送顺序保存。 */
+    private final List<HeldPacket> held = new ArrayList<>();
+    private boolean released;
+
+    private record HeldPacket(Connection connection, Packet<?> packet, PacketSendListener listener) {
+    }
 
     LoginFlow(TrustedServerRuntime runtime, ServerLoginPacketListenerImpl handler, MinecraftServer server) {
         this.runtime = runtime;
@@ -176,7 +191,28 @@ public final class LoginFlow {
         finish(outcome);
     }
 
+    /**
+     * 连接要发出一条非本 mod 的登录 query 时调用（任意线程）。
+     *
+     * @return {@code true} 表示已扣下或丢弃，调用方不应再发送
+     */
+    public boolean holdOutgoing(Connection connection, Packet<?> packet, PacketSendListener listener) {
+        synchronized (lock) {
+            if (released) {
+                return false;
+            }
+            if (done) {
+                // 已被拒绝：直接丢弃
+                release(packet);
+                return true;
+            }
+            held.add(new HeldPacket(connection, packet, listener));
+            return true;
+        }
+    }
+
     private void finish(AuthOutcome outcome) {
+        List<HeldPacket> toSend = List.of();
         synchronized (lock) {
             if (done) {
                 if (outcome instanceof AuthOutcome.Accepted late) {
@@ -185,9 +221,21 @@ public final class LoginFlow {
                 return;
             }
             done = true;
+            if (outcome instanceof AuthOutcome.Accepted) {
+                released = true;
+                toSend = new ArrayList<>(held);
+            } else {
+                held.forEach(h -> release(h.packet()));
+            }
+            held.clear();
         }
         cancelTimeout();
         if (outcome instanceof AuthOutcome.Accepted ok) {
+            // 先按原顺序补发扣下的 query：Fabric 在发送时同步登记在途 query，之后才完成 authDone，
+            // 保证 Fabric 会等这些 query 的回答，而不是立即放行
+            for (HeldPacket h : toSend) {
+                h.connection().send(h.packet(), h.listener());
+            }
             accepted = ok;
             reportGate(true);
             runtime.registerHandover(profile.getId(), ok.handover());
@@ -210,6 +258,8 @@ public final class LoginFlow {
                 return;
             }
             done = true;
+            held.forEach(h -> release(h.packet()));
+            held.clear();
         }
         cancelTimeout();
         reportGate(false);
@@ -227,6 +277,8 @@ public final class LoginFlow {
                     session.timeout();
                 }
             }
+            held.forEach(h -> release(h.packet()));
+            held.clear();
         }
         if (accepted != null) {
             // 放行后、进入游戏前就断开了
@@ -234,6 +286,12 @@ public final class LoginFlow {
         }
         reportGate(false);
         runtime.flows.remove(handler);
+    }
+
+    private static void release(Packet<?> packet) {
+        if (packet instanceof ClientboundCustomQueryPacket query && query.getData() != null) {
+            query.getData().release();
+        }
     }
 
     private void send(Outbound outbound) {

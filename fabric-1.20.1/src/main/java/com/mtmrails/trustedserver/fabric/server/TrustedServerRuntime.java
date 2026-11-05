@@ -199,6 +199,11 @@ public final class TrustedServerRuntime {
         return flow.onHello() ? flow : null;
     }
 
+    /** 该登录连接的认证流程；认证已通过或不存在时为 {@code null}。 */
+    public LoginFlow loginFlow(ServerLoginPacketListenerImpl handler) {
+        return flows.get(handler);
+    }
+
     void registerHandover(UUID player, SessionHandover handover) {
         SessionHandover previous = handovers.put(player, handover);
         if (previous != null) {

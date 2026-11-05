@@ -4,6 +4,7 @@
   "package": "com.mtmrails.trustedserver.fabric.mixin",
   "compatibilityLevel": "JAVA_17",
   "mixins": [
+    "ConnectionHoldQueriesMixin",
     "LegacyQueryHandlerMixin",
     "ServerLoginHelloMixin",
     "ServerLoginPacketListenerAccessor",
