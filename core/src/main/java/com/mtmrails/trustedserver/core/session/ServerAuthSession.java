@@ -1,0 +1,398 @@
+package com.mtmrails.trustedserver.core.session;
+
+import com.mtmrails.trustedserver.core.ProtocolVersion;
+import com.mtmrails.trustedserver.core.crypto.CryptoException;
+import com.mtmrails.trustedserver.core.crypto.Ed25519;
+import com.mtmrails.trustedserver.core.crypto.HandshakeSignatures;
+import com.mtmrails.trustedserver.core.crypto.SecureMessageChannel;
+import com.mtmrails.trustedserver.core.crypto.SessionHandover;
+import com.mtmrails.trustedserver.core.crypto.SessionKeys;
+import com.mtmrails.trustedserver.core.crypto.Side;
+import com.mtmrails.trustedserver.core.crypto.Transcript;
+import com.mtmrails.trustedserver.core.crypto.X25519;
+import com.mtmrails.trustedserver.core.message.Challenge;
+import com.mtmrails.trustedserver.core.message.Channel;
+import com.mtmrails.trustedserver.core.message.ClientHello;
+import com.mtmrails.trustedserver.core.message.ClientProof;
+import com.mtmrails.trustedserver.core.message.Finish;
+import com.mtmrails.trustedserver.core.message.FinishAck;
+import com.mtmrails.trustedserver.core.message.Message;
+import com.mtmrails.trustedserver.core.message.MessageCodec;
+import com.mtmrails.trustedserver.core.message.PasswordAnswer;
+import com.mtmrails.trustedserver.core.message.PasswordRequest;
+import com.mtmrails.trustedserver.core.message.ServerHello;
+import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
+import java.security.SecureRandom;
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * 服务端认证状态机：一个连接一个实例（PROTOCOL.md 第 1、4 节）。
+ *
+ * <pre>
+ * start() → ServerHello
+ * ClientHello → Challenge
+ * ClientProof → [PasswordRequest ↔ PasswordAnswer]* → Finish
+ * FinishAck → Accepted
+ * </pre>
+ *
+ * <p>使用约定：
+ * <ul>
+ *   <li>每次只能有一个 {@link #onAnswer} 在途；上一个 future 完成前再次调用抛出 {@link IllegalStateException}
+ *   <li>{@code channel} 传入该回答所对应 query 的频道；{@code payload} 为 {@code null} 表示对方回答“不理解”
+ *   <li>超时由上层计时，到点调用 {@link #timeout()}
+ * </ul>
+ *
+ * <p>任何协议、密码学或账号存储失败都会废弃本连接的所有通道并返回 {@link AuthOutcome.Rejected}。
+ *
+ * <p>找回流程的改绑推迟到整个认证成功前才提交：已设登录密码时，必须连登录密码也验证通过，
+ * 避免只掌握找回密码、却输错登录密码的一方改掉原有绑定。
+ */
+public final class ServerAuthSession {
+    private enum State {
+        NEW,
+        AWAIT_CLIENT_HELLO,
+        AWAIT_PROOF,
+        AWAIT_PASSWORD,
+        AWAIT_FINISH_ACK,
+        DONE
+    }
+
+    private final String accountId;
+    private final String username;
+    private final boolean onlineMode;
+    private final ServerAuthConfig config;
+    private final Ed25519.KeyPairData identity;
+    private final AccountGateway accounts;
+    private final SecureRandom random;
+
+    private State state = State.NEW;
+    private Channel expectedChannel;
+    private boolean busy;
+    private volatile boolean timedOut;
+    private AuthOutcome outcome;
+
+    private X25519.Ephemeral ephemeral;
+    private byte[] serverNonce;
+    private byte[] serverHelloPayload;
+    private byte[] transcript;
+    private SessionKeys keys;
+    private SecureMessageChannel auth;
+    private SecureMessageChannel password;
+    private boolean clientWantsTunnel;
+    private boolean tunnel;
+
+    private boolean trusted;
+    private byte[] playerPub;
+    private AccountView account;
+    private boolean rebindPending;
+    private PasswordRequest.Kind pendingKind;
+    private int attemptsLeft;
+
+    /**
+     * @param accountId 账号 ID：正版为 UUID，离线为小写用户名
+     * @param username 原版登录 Hello 中的原始用户名（参与 transcript）
+     * @param onlineMode 服务端实际的 online-mode
+     */
+    public ServerAuthSession(String accountId, String username, boolean onlineMode, ServerAuthConfig config,
+            Ed25519.KeyPairData identity, AccountGateway accounts, SecureRandom random) {
+        this.accountId = Objects.requireNonNull(accountId, "accountId");
+        this.username = Objects.requireNonNull(username, "username");
+        this.onlineMode = onlineMode;
+        this.config = Objects.requireNonNull(config, "config");
+        this.identity = Objects.requireNonNull(identity, "identity");
+        this.accounts = Objects.requireNonNull(accounts, "accounts");
+        this.random = Objects.requireNonNull(random, "random");
+    }
+
+    /** 生成 ServerHello。只能调用一次。 */
+    public Outbound start() {
+        if (state != State.NEW) {
+            throw new IllegalStateException("session already started");
+        }
+        ephemeral = X25519.generate(random);
+        serverNonce = new byte[32];
+        random.nextBytes(serverNonce);
+        serverHelloPayload = MessageCodec.encodePlain(new ServerHello(ProtocolVersion.supported(),
+                ephemeral.publicKey(), serverNonce, config.features(), onlineMode));
+        state = State.AWAIT_CLIENT_HELLO;
+        expectedChannel = Channel.AUTH;
+        return new Outbound(Channel.AUTH, serverHelloPayload);
+    }
+
+    /** 处理对方对上一条 query 的回答。 */
+    public CompletableFuture<ServerStep> onAnswer(Channel channel, byte[] payload) {
+        if (state == State.NEW) {
+            throw new IllegalStateException("session not started");
+        }
+        if (state == State.DONE) {
+            throw new IllegalStateException("session already finished");
+        }
+        if (busy) {
+            throw new IllegalStateException("previous answer still in progress");
+        }
+        busy = true;
+        CompletableFuture<ServerStep> step;
+        try {
+            step = dispatch(channel, payload);
+        } catch (MalformedMessageException e) {
+            step = done(RejectReason.PROTOCOL_ERROR);
+        } catch (CryptoException e) {
+            step = done(RejectReason.CRYPTO_FAILURE);
+        } catch (RuntimeException e) {
+            step = done(RejectReason.INTERNAL_ERROR);
+        }
+        return step
+                .exceptionally(t -> reject(RejectReason.INTERNAL_ERROR))
+                .thenApply(s -> {
+                    busy = false;
+                    return timedOut ? enforceTimeout(s) : s;
+                });
+    }
+
+    /** 处理期间已超时：除已拒绝外一律改判超时，连同可能已生成的移交对象一起废弃。 */
+    private ServerStep enforceTimeout(ServerStep step) {
+        if (step instanceof ServerStep.Done done && done.outcome() instanceof AuthOutcome.Rejected) {
+            return step;
+        }
+        if (step instanceof ServerStep.Done done && done.outcome() instanceof AuthOutcome.Accepted accepted) {
+            accepted.handover().close();
+            outcome = new AuthOutcome.Rejected(RejectReason.TIMEOUT, trusted);
+            return new ServerStep.Done(outcome);
+        }
+        return reject(RejectReason.TIMEOUT);
+    }
+
+    /**
+     * 认证总超时。若有回答仍在处理，清理工作推迟到它完成时进行，避免与其他线程争用通道。
+     */
+    public AuthOutcome timeout() {
+        if (state == State.DONE) {
+            return outcome;
+        }
+        timedOut = true;
+        if (busy) {
+            return new AuthOutcome.Rejected(RejectReason.TIMEOUT, trusted);
+        }
+        return ((ServerStep.Done) reject(RejectReason.TIMEOUT)).outcome();
+    }
+
+    private CompletableFuture<ServerStep> dispatch(Channel channel, byte[] payload)
+            throws MalformedMessageException, CryptoException {
+        if (channel != expectedChannel) {
+            return done(RejectReason.PROTOCOL_ERROR);
+        }
+        if (payload == null) {
+            return done(state == State.AWAIT_CLIENT_HELLO ? RejectReason.NO_MOD : RejectReason.PROTOCOL_ERROR);
+        }
+        return switch (state) {
+            case AWAIT_CLIENT_HELLO -> onClientHello(payload);
+            case AWAIT_PROOF -> onClientProof(payload);
+            case AWAIT_PASSWORD -> onPasswordAnswer(payload);
+            case AWAIT_FINISH_ACK -> onFinishAck(payload);
+            case NEW, DONE -> throw new IllegalStateException("unreachable");
+        };
+    }
+
+    private CompletableFuture<ServerStep> onClientHello(byte[] payload)
+            throws MalformedMessageException, CryptoException {
+        Message message = MessageCodec.decodePlain(Channel.AUTH, payload);
+        if (!(message instanceof ClientHello hello)) {
+            return done(RejectReason.PROTOCOL_ERROR);
+        }
+        if (!ProtocolVersion.isSupported(hello.version())) {
+            return done(RejectReason.VERSION_MISMATCH);
+        }
+        transcript = Transcript.compute(serverHelloPayload, payload, username);
+        byte[] shared = ephemeral.agree(hello.clientEphPub());
+        ephemeral = null;
+        keys = SessionKeys.derive(shared, serverNonce, hello.clientNonce(), transcript);
+        auth = keys.authChannel(Side.SERVER);
+        password = keys.passwordChannel(Side.SERVER);
+        clientWantsTunnel = hello.wantTunnel();
+
+        byte[] signature = HandshakeSignatures.signServer(identity, transcript);
+        state = State.AWAIT_PROOF;
+        expectedChannel = Channel.AUTH;
+        return send(Channel.AUTH, auth.seal(new Challenge(identity.publicKey(), signature)));
+    }
+
+    private CompletableFuture<ServerStep> onClientProof(byte[] payload)
+            throws MalformedMessageException, CryptoException {
+        Message message = auth.open(payload);
+        if (!(message instanceof ClientProof proof)) {
+            return done(RejectReason.PROTOCOL_ERROR);
+        }
+        if (!HandshakeSignatures.verifyClient(proof.playerPub(), transcript, proof.playerSig())) {
+            return done(RejectReason.INVALID_PROOF);
+        }
+        // 模型 A 的可信协议握手到此完成；账号、密码仍未验证
+        trusted = true;
+        playerPub = proof.playerPub();
+        return accounts.find(accountId).thenCompose(this::afterLookup);
+    }
+
+    private CompletableFuture<ServerStep> afterLookup(Optional<AccountView> found) {
+        if (found.isEmpty()) {
+            return accounts.bindNew(accountId, username, playerPub).thenApply(bound -> {
+                if (!bound) {
+                    return reject(RejectReason.ACCOUNT_CONFLICT);
+                }
+                account = new AccountView(playerPub, true, false, false);
+                return beginPassword(PasswordRequest.Kind.SET);
+            });
+        }
+        account = found.get();
+        if (Arrays.equals(account.playerPub(), playerPub)) {
+            return CompletableFuture.completedFuture(afterKeyMatched());
+        }
+        if (account.hasRecoveryPassword()) {
+            return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.RECOVERY));
+        }
+        return done(RejectReason.KEY_MISMATCH);
+    }
+
+    /** 公钥与绑定一致（或已找回）后的判定，PROTOCOL.md 4.6。 */
+    private ServerStep afterKeyMatched() {
+        if (account.hasLoginPassword()) {
+            return beginPassword(PasswordRequest.Kind.LOGIN);
+        }
+        if (account.restricted()) {
+            return beginPassword(PasswordRequest.Kind.SET);
+        }
+        return finish();
+    }
+
+    private ServerStep beginPassword(PasswordRequest.Kind kind) {
+        pendingKind = kind;
+        attemptsLeft = kind == PasswordRequest.Kind.SET ? 0 : config.maxPasswordAttempts();
+        return sendPasswordRequest();
+    }
+
+    private ServerStep sendPasswordRequest() {
+        state = State.AWAIT_PASSWORD;
+        expectedChannel = Channel.PASSWORD;
+        try {
+            return new ServerStep.Send(new Outbound(Channel.PASSWORD,
+                    password.seal(new PasswordRequest(pendingKind, attemptsLeft, config.passwordTimeoutSec()))));
+        } catch (CryptoException e) {
+            return reject(RejectReason.CRYPTO_FAILURE);
+        }
+    }
+
+    private CompletableFuture<ServerStep> onPasswordAnswer(byte[] payload)
+            throws MalformedMessageException, CryptoException {
+        Message message = password.open(payload);
+        if (!(message instanceof PasswordAnswer answer)) {
+            return done(RejectReason.PROTOCOL_ERROR);
+        }
+        String secret = answer.password();
+        switch (pendingKind) {
+            case SET:
+                if (answer.skipped()) {
+                    return CompletableFuture.completedFuture(finish());
+                }
+                return accounts.setLoginPassword(accountId, secret).thenApply(v -> {
+                    account = account.withLoginPassword();
+                    return finish();
+                });
+            case LOGIN:
+                if (answer.skipped()) {
+                    return passwordFailed();
+                }
+                return accounts.verifyLoginPassword(accountId, secret)
+                        .thenCompose(ok -> ok ? loginSucceeded() : passwordFailed());
+            case RECOVERY:
+                if (answer.skipped()) {
+                    return passwordFailed();
+                }
+                return accounts.verifyRecoveryPassword(accountId, secret)
+                        .thenCompose(ok -> ok ? recoverySucceeded() : passwordFailed());
+            default:
+                throw new IllegalStateException("unreachable");
+        }
+    }
+
+    private CompletableFuture<ServerStep> recoverySucceeded() {
+        if (account.hasLoginPassword()) {
+            rebindPending = true;
+            return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.LOGIN));
+        }
+        return accounts.rebind(accountId, playerPub).thenApply(v -> {
+            account = account.withPlayerPub(playerPub);
+            return afterKeyMatched();
+        });
+    }
+
+    private CompletableFuture<ServerStep> loginSucceeded() {
+        if (!rebindPending) {
+            return CompletableFuture.completedFuture(finish());
+        }
+        return accounts.rebind(accountId, playerPub).thenApply(v -> {
+            rebindPending = false;
+            account = account.withPlayerPub(playerPub);
+            return finish();
+        });
+    }
+
+    private CompletableFuture<ServerStep> passwordFailed() {
+        attemptsLeft--;
+        boolean exhausted = attemptsLeft == 0;
+        return accounts.passwordFailed(accountId, pendingKind, exhausted)
+                .thenApply(v -> exhausted ? reject(RejectReason.PASSWORD_ATTEMPTS_EXHAUSTED) : sendPasswordRequest());
+    }
+
+    private ServerStep finish() {
+        tunnel = config.tunnelFor(clientWantsTunnel);
+        state = State.AWAIT_FINISH_ACK;
+        expectedChannel = Channel.AUTH;
+        try {
+            return new ServerStep.Send(new Outbound(Channel.AUTH,
+                    auth.seal(new Finish(tunnel, config.noticesFor(account)))));
+        } catch (CryptoException e) {
+            return reject(RejectReason.CRYPTO_FAILURE);
+        }
+    }
+
+    private CompletableFuture<ServerStep> onFinishAck(byte[] payload)
+            throws MalformedMessageException, CryptoException {
+        Message message = auth.open(payload);
+        if (!(message instanceof FinishAck)) {
+            return done(RejectReason.PROTOCOL_ERROR);
+        }
+        SessionHandover handover = SessionHandover.create(keys, Side.SERVER, password, tunnel);
+        outcome = new AuthOutcome.Accepted(accountId, username, playerPub, account.restricted(),
+                account.hasLoginPassword(), account.hasRecoveryPassword(), config.noticesFor(account), handover);
+        state = State.DONE;
+        auth.close();
+        keys.destroy();
+        return CompletableFuture.completedFuture(new ServerStep.Done(outcome));
+    }
+
+    private CompletableFuture<ServerStep> send(Channel channel, byte[] payload) {
+        return CompletableFuture.completedFuture(new ServerStep.Send(new Outbound(channel, payload)));
+    }
+
+    private CompletableFuture<ServerStep> done(RejectReason reason) {
+        return CompletableFuture.completedFuture(reject(reason));
+    }
+
+    /** 拒绝并废弃本连接的所有通道与密钥。已结束时返回原结果。 */
+    private ServerStep reject(RejectReason reason) {
+        if (state != State.DONE) {
+            outcome = new AuthOutcome.Rejected(reason, trusted);
+            state = State.DONE;
+            ephemeral = null;
+            if (auth != null) {
+                auth.close();
+                password.close();
+            }
+            if (keys != null) {
+                keys.destroy();
+            }
+        }
+        return new ServerStep.Done(outcome);
+    }
+}

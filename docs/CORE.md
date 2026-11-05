@@ -55,13 +55,19 @@ com.mtmrails.trustedserver.core
 │   ├── Direction / Side             线上方向（S2C / C2S 及其 nonce 标签）与本端角色
 │   ├── AeadStream                   一条计数流：一把密钥、一个方向、只加密或只解密；序号、使用上限，失败即永久关闭
 │   ├── SecureMessageChannel         认证或密码频道上本端的加密收发（一条 SEAL 流 + 一条 OPEN 流）
+│   ├── SessionHandover              认证成功后移交游戏阶段：同一个密码通道实例 + 隧道计数流（仅开隧道时）
 │   └── CryptoException              受检异常：DH / 标签 / 上限 / 已关闭，调用方断开连接
 ├── session/
 │   ├── ServerAuthSession            服务端状态机
+│   ├── ServerAuthConfig             隧道策略、每种密码的尝试次数、密码框超时、进服提示文本
+│   ├── AccountGateway / AccountView 服务端账号访问接口（异步）与账号快照；由 core-server 的 AccountService 实现
+│   ├── ServerStep / Outbound        Send(下一条 query) / Done(结果)；query 的频道与 payload
+│   ├── AuthOutcome                  Accepted(账号状态、notices、移交对象) / Rejected(原因, 是否已可信)
+│   ├── RejectReason                 NO_MOD、VERSION_MISMATCH、PROTOCOL_ERROR、CRYPTO_FAILURE、INVALID_PROOF、KEY_MISMATCH、
+│   │                                PASSWORD_ATTEMPTS_EXHAUSTED、ACCOUNT_CONFLICT、TIMEOUT、INTERNAL_ERROR
 │   ├── ClientAuthSession            客户端状态机
-│   ├── Outbound                     record(channel, payload)：要发给对方的一条 query 或回答
-│   ├── AuthOutcome                  最终结果：Accepted(身份, 是否受限, 是否开隧道, notices) / Rejected(原因)
-│   └── RejectReason                 枚举：NO_MOD、VERSION_MISMATCH、KEY_MISMATCH、LOCKED、TIMEOUT、BANNED、PROTOCOL_ERROR …
+│   ├── ClientEnvironment            客户端本地能力接口：TOFU 记录、公钥变更确认、玩家密钥、密码弹框
+│   └── ClientStep / ClientResult / ClientFailure   Reply / Complete / Fail，及其结果与本地诊断
 ├── tunnel/
 │   └── TunnelFrameCodec             隧道帧加解密（只处理字节块，Netty 适配放在 common）
 └── ProtocolVersion                  当前版本号、支持列表、协商逻辑
@@ -72,7 +78,7 @@ com.mtmrails.trustedserver.core
 ```
 com.mtmrails.trustedserver.server
 ├── account/
-│   ├── AccountService               绑定、校验密码、设定密码（解除受限）、找回重绑、管理员 reset / trust
+│   ├── AccountService               实现 core 的 AccountGateway：绑定、校验密码、设定密码（解除受限）、找回重绑、管理员 reset / trust
 │   ├── Account (record)             对应 players 表
 │   └── PlayerId                     正版用 UUID，离线用小写用户名
 ├── password/
@@ -101,7 +107,7 @@ com.mtmrails.trustedserver.client
 ├── KnownServers                     服务器地址 → 服务端身份公钥（TOFU），检测公钥变化
 ├── PlayerKeyStore                   (服务端身份公钥, 用户名) → 玩家 Ed25519 密钥对；文件权限设为仅本人可读
 ├── PlayerKeyBackup                  单个玩家认证密钥的导入导出；校验密钥对与目标元数据，冲突时要求上层明确确认
-└── PasswordPrompt                   接口：由 common 层用 GUI 实现，返回 CompletableFuture<Optional<String>>
+└── （密码弹框与公钥变更确认属于 core 的 ClientEnvironment，由 common 层用 GUI 实现）
 ```
 
 密钥备份仅包含指定“服务端身份公钥 + 用户名”下用于 `ClientProof` 的玩家 Ed25519 密钥对及识别该目标所需的元数据，不导出密码、KnownServers 的信任决定或服务端身份私钥。`core-client` 负责解析、完整性校验和冲突检测；文件选择、冲突确认及安全警告由后续 common 客户端界面负责。导出容器格式和备份密码保护方案在实现该模块前单独确定。
@@ -111,31 +117,29 @@ com.mtmrails.trustedserver.client
 ```java
 // 服务端：一个连接对应一个实例，由 common 层持有
 public final class ServerAuthSession {
-    ServerAuthSession(PlayerId id, String username, boolean onlineMode,
-                      AccountService accounts, ServerConfig config,
-                      ServerIdentity identity, Clock clock, SecureRandom rng);
+    ServerAuthSession(String accountId, String username, boolean onlineMode, ServerAuthConfig config,
+                      Ed25519.KeyPairData identity, AccountGateway accounts, SecureRandom random);
 
-    Outbound start();                                        // 生成 ServerHello
-    CompletableFuture<Step> onAnswer(String channel, byte[] payloadOrNull);  // null 表示对方“不理解”
-    Optional<SessionKeys> keys();                            // 认证成功后交给隧道和密码通道
+    Outbound start();                                                          // 生成 ServerHello
+    CompletableFuture<ServerStep> onAnswer(Channel channel, byte[] payloadOrNull);  // null 表示对方“不理解”
+    AuthOutcome timeout();                                                     // 认证总超时
 }
 
-public sealed interface Step {
-    record Send(Outbound next) implements Step {}            // 继续发下一条 query
-    record Done(AuthOutcome outcome) implements Step {}      // 结束：放行或断开
+public sealed interface ServerStep {
+    record Send(Outbound next) implements ServerStep {}      // 继续发下一条 query
+    record Done(AuthOutcome outcome) implements ServerStep {}  // 结束：放行或断开
 }
 
 // 客户端：onlineMode 从服务端 ServerHello 读取，参与 transcript 计算
 public final class ClientAuthSession {
     ClientAuthSession(String serverAddress, String username, boolean wantTunnel,
-                      KnownServers known, PlayerKeyStore keys, PasswordPrompt prompt,
-                      SecureRandom rng);
+                      ClientEnvironment environment, SecureRandom random);
 
-    CompletableFuture<Optional<byte[]>> onQuery(String channel, byte[] payload);  // 返回空表示“不理解”
+    CompletableFuture<ClientStep> onQuery(Channel channel, byte[] payload);  // 非本协议频道由 common 层回答“不理解”
+    void abort();
 }
 
-// 认证 / 密码频道的加密收发（已在第 3 步实现）。密码频道由 SessionKeys.passwordChannel(side) 创建，
-// 登录阶段到游戏阶段移交同一实例，序号连续
+// 认证 / 密码频道的加密收发（第 3 步）。密码频道在认证成功后经 SessionHandover 移交游戏阶段，序号连续
 public final class SecureMessageChannel {
     byte[] seal(Message msg) throws CryptoException;
     Message open(byte[] payload) throws CryptoException, MalformedMessageException;  // 重放、乱序、篡改都抛异常
@@ -143,7 +147,11 @@ public final class SecureMessageChannel {
 ```
 
 - 状态机内部用枚举记录当前状态，收到当前状态不期望的消息类型，一律判为 `PROTOCOL_ERROR`
-- 状态机本身不处理超时；超时由 common 层计时，到点后调用 `session.timeout()` 得到 `Rejected(TIMEOUT)`
+- 状态机本身不处理超时；超时由 common 层计时，到点后调用 `session.timeout()` 得到 `Rejected(TIMEOUT)`。若此时有回答仍在后台处理，清理推迟到它完成时，且结果一律改判超时
+- 每个连接同时只能有一个 `onAnswer` / `onQuery` 在途；账号操作可在其他线程完成，上层须把后续动作切回该连接的事件循环
+- 任何协议、密码学或账号存储失败都会废弃本连接的所有通道与会话密钥（PROTOCOL.md 4.3.3）
+- 找回流程的改绑推迟到整个认证成功前才提交：已设登录密码时，登录密码也须验证通过，避免只掌握找回密码、却输错登录密码的一方改掉原有绑定
+- 每种密码（登录 / 找回）在一个连接上各有 `maxPasswordAttempts` 次机会；找回成功后转入登录密码时次数重新计算。跨连接的锁定由 `AccountGateway.passwordFailed(…, exhausted)` 的实现负责
 - 可信握手完成前，拒绝原因只在内部和审计日志中使用；服务端对外统一使用配置的拒绝文本（模仿原版封禁或自定义）。服务端成功解密 ClientProof 并验证其对当前 transcript 的签名后，才允许提供具体原因；这只是模型 A 的协议验证边界，不代表公钥绑定、密码认证已经通过，更不能提前放行。具体错误的受保护传输格式另行定义。
 
 ## 5. 线程模型
@@ -205,7 +213,7 @@ CompletableFuture<Step> ◄─────────────────�
 | 1 | Gradle 多模块骨架（先只建 core 三个模块）、Java 17、JUnit、`.gitignore` | 空项目 `./gradlew test` 通过 |
 | 2 | `wire` + `message` | 编解码测试全部通过 |
 | 3 | `crypto` | 通过 RFC 测试向量；冻结的已知答案向量；`AeadStream` / `SecureMessageChannel` 的隔离、篡改、重放、乱序、长度边界与使用上限测试通过 |
-| 4 | `session` 状态机 + 内存版 `AccountService` | 端到端握手和攻击场景测试通过 |
+| 4 | `session` 状态机 + 测试用内存账号存储 | 端到端握手和攻击场景测试通过 |
 | 5 | `PasswordHasher` + SQLite 存储 | 契约测试和迁移测试通过 |
 | 6 | `policy`、`status`、`config` | 策略测试通过；能生成带默认值的 JSON 配置 |
 | 7 | `TunnelFrameCodec` + 游戏阶段密码通道接入 | 隧道帧（长度 AAD、分片 / 合并、65536 字节上限、截断）和游戏阶段密码通道的测试通过 |

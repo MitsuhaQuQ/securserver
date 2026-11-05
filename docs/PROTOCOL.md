@@ -238,7 +238,10 @@ password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字�
 - 不采用 OPAQUE 一类的 PAKE（口令认证密钥交换）：服务端身份已固定，再加上 AEAD，足以防窃听和中间人，复杂度低很多
 - 判定流程：
   - LOGIN 正确：进入 Finish
-  - RECOVERY 正确：把绑定改为本次的 `player_pub`；如果还设了登录密码，再发一次 PasswordRequest(LOGIN)
+  - RECOVERY 正确：
+    - 已设登录密码：先发 PasswordRequest(LOGIN)，登录密码也验证通过后，才把绑定改为本次的 `player_pub` 并进入 Finish。改绑推迟提交，避免只掌握找回密码、却输错登录密码的一方改掉原有绑定；登录密码错误次数用尽时，原有绑定保持不变
+    - 未设登录密码：立即把绑定改为本次的 `player_pub`，然后按 4.6 中“公钥一致”的规则继续（受限则发 PasswordRequest(SET)，否则进入 Finish）
+    - 找回成功后转入登录密码时，登录密码的尝试次数重新计算
   - SET 且 `password` 非空：用 Argon2id 保存为登录密码，**解除受限**，进入 Finish
   - SET 且 `password` 为空（玩家点了“跳过”或提示框超时前关闭）：保持受限，进入 Finish
   - LOGIN / RECOVERY 错误：失败计数加 1，`attempts_left > 0` 时重发请求，否则锁定并断开
