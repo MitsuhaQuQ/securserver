@@ -208,6 +208,7 @@ player_sig     : 64 bytes   Sign(player_key, "tsrv v2 client" || transcript_0)
 | 公钥一致，受限且未设登录密码 | 发 PasswordRequest(SET) |
 | 公钥一致，未受限且未设登录密码 | 进入 Finish |
 | 公钥一致，已设登录密码 | 发 PasswordRequest(LOGIN) |
+| 账号存在但设备绑定已被管理员清空（`reset key`） | 视同身份已确认：已设登录密码则先发 PasswordRequest(LOGIN)，通过后才绑定；否则立即绑定，按“公钥一致”的规则继续。绑定为原子操作，并发连接抢先时按冲突拒绝 |
 | 公钥不一致，本连接已通过 Mojang session 验证 | 视为连接可信（新设备）：已设登录密码则发 PasswordRequest(LOGIN)，通过后才改绑；否则立即改绑，按“公钥一致”的规则继续。Finish 的 `notices` 下发改绑提示 |
 | 公钥不一致，未经 Mojang 验证，已设找回密码 | 发 PasswordRequest(RECOVERY) |
 | 公钥不一致，未经 Mojang 验证，未设找回密码 | 断开，并明确提示“密钥不匹配，请联系管理员重置” |
@@ -248,7 +249,7 @@ password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字�
     - 已设登录密码：先发 PasswordRequest(LOGIN)，登录密码也验证通过后，才把绑定改为本次的 `player_pub` 并进入 Finish。改绑推迟提交，避免只掌握找回密码、却输错登录密码的一方改掉原有绑定；登录密码错误次数用尽时，原有绑定保持不变
     - 未设登录密码：立即把绑定改为本次的 `player_pub`，然后按 4.6 中“公钥一致”的规则继续（受限则发 PasswordRequest(SET)，否则进入 Finish）
     - 找回成功后转入登录密码时，登录密码的尝试次数重新计算
-  - SET 且 `password` 非空：用 Argon2id 保存为登录密码，**解除受限**，进入 Finish
+  - SET 且 `password` 非空：符合密码规则则用 Argon2id 保存为登录密码，**解除受限**，进入 Finish；不符合则重新发 PasswordRequest(SET)，连续不符合的次数达到登录密码尝试次数时按跳过处理（保持受限）
   - SET 且 `password` 为空（玩家点了“跳过”或提示框超时前关闭）：保持受限，进入 Finish
   - LOGIN / RECOVERY 错误：失败计数加 1，`attempts_left > 0` 时重发请求，否则锁定并断开
 
@@ -307,6 +308,11 @@ notices        : string × notice_count   客户端进服后要显示的提示�
 - 两次输入是否一致由客户端在本地校验，线上只携带最终密码
 - 服务端依然注册这两个命令，但直接通过聊天执行时一律拒绝并提示，并且**不写入命令日志**
 - 管理员重置只能在服务端控制台执行：`trustedserver reset <player> key|password|recovery|all`
+  - `key`：清空设备绑定，保留密码与受限状态；下次登录直接绑定新设备（设了登录密码仍须先输对，见 4.6）
+  - `password`：清除登录密码，恢复受限（6.1）
+  - `recovery`：清除找回密码
+  - `all`：删除整个账号，下次按新用户处理
+- 密码规则（服务端配置，默认）：6–128 个 Unicode 码点；登录密码与找回密码不能相同。游戏内设定不符合规则时返回 `PasswordResult(REJECTED)`
 
 ### 6.1 新用户受限状态
 
@@ -342,10 +348,11 @@ notices        : string × notice_count   客户端进服后要显示的提示�
 ## 9. 服务端存储（SQLite）
 
 ```sql
+-- 表结构版本记录在 PRAGMA user_version，启动时按版本依次迁移；开启 WAL，写操作串行
 CREATE TABLE players (
   id             TEXT PRIMARY KEY,   -- 正版: UUID；离线: 小写用户名
   last_name      TEXT NOT NULL,
-  player_pub     BLOB NOT NULL,      -- Ed25519 公钥
+  player_pub     BLOB,               -- Ed25519 公钥；NULL 表示已被管理员清空，等待重新绑定
   password_hash  TEXT,               -- Argon2id 编码串，NULL 表示未设置
   recovery_hash  TEXT,
   restricted     INTEGER NOT NULL DEFAULT 1,  -- 1 = 新用户受限状态
@@ -356,16 +363,20 @@ CREATE TABLE players (
 
 CREATE TABLE lockouts (
   subject        TEXT PRIMARY KEY,   -- "name:<id>" 或 "ip:<addr>"
-  failures       INTEGER NOT NULL,
-  locked_until   INTEGER
+  failures       INTEGER NOT NULL,   -- 跨连接累计的密码错误次数，登录成功后清零
+  locked_until   INTEGER             -- 毫秒时间戳；NULL 表示未锁定
 );
 
 CREATE TABLE audit_log (
-  ts             INTEGER NOT NULL,
+  ts             INTEGER NOT NULL,   -- 毫秒时间戳；默认保留 90 天
   subject        TEXT NOT NULL,
-  event          TEXT NOT NULL,      -- bind / login_ok / login_fail / recover / reset / trust / reject
-  ip             TEXT
+  event          TEXT NOT NULL,      -- bind / bind_after_reset / login_ok / login_fail / recover / online_rebind /
+                                     -- set_password / set_recovery / reset_key / reset_password / reset_recovery /
+                                     -- reset_all / trust / lockout / reject
+  ip             TEXT,
+  detail         TEXT
 );
+CREATE INDEX audit_log_ts ON audit_log (ts);
 ```
 
 ## 10. 协议版本规则（关键版本机制）

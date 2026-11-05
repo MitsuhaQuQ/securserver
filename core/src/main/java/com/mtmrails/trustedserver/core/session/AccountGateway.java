@@ -8,7 +8,8 @@ import java.util.concurrent.CompletableFuture;
  * 服务端状态机访问账号的接口，由 core-server 的 AccountService 实现。
  *
  * <p>所有方法可能涉及 Argon2id 或数据库，必须在专用线程池上执行并返回 future，不得阻塞调用线程。
- * future 异常完成时，状态机按 {@link RejectReason#INTERNAL_ERROR} 拒绝。
+ * future 异常完成时，状态机按 {@link RejectReason#INTERNAL_ERROR} 拒绝；
+ * 原因为 {@link java.util.concurrent.RejectedExecutionException}（线程池排满）时按 {@link RejectReason#SERVER_BUSY} 拒绝。
  */
 public interface AccountGateway {
     /** 按账号 ID（正版为 UUID，离线为小写用户名）查找。 */
@@ -25,11 +26,22 @@ public interface AccountGateway {
 
     CompletableFuture<Boolean> verifyRecoveryPassword(String accountId, String password);
 
-    /** 设定登录密码，并解除受限（PROTOCOL.md 6.1）。 */
-    CompletableFuture<Void> setLoginPassword(String accountId, String password);
+    /**
+     * 设定登录密码，并解除受限（PROTOCOL.md 6.1）。
+     *
+     * @return 密码不符合服务端规则时为 {@code false}，账号不变
+     */
+    CompletableFuture<Boolean> setLoginPassword(String accountId, String password);
 
     /** 把账号改绑到新公钥（找回流程，或正版模式下的新设备）。 */
     CompletableFuture<Void> rebind(String accountId, byte[] playerPub, RebindReason reason);
+
+    /**
+     * 管理员清空绑定后的重新绑定：仅当账号当前没有绑定公钥时原子地写入。
+     *
+     * @return 已被并发连接抢先绑定时为 {@code false}
+     */
+    CompletableFuture<Boolean> claimUnboundKey(String accountId, byte[] playerPub);
 
     /**
      * 记录一次密码错误。{@code exhausted} 为真表示本连接的尝试次数已用尽，实现应据此锁定。

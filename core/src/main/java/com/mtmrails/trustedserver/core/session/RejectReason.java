@@ -20,8 +20,10 @@ public enum RejectReason {
     KEY_MISMATCH,
     /** 登录或找回密码错误次数用尽。 */
     PASSWORD_ATTEMPTS_EXHAUSTED,
-    /** 新用户名绑定时被并发的另一连接抢先。 */
+    /** 新用户名绑定（或管理员清空绑定后的重新绑定）时被并发的另一连接抢先。 */
     ACCOUNT_CONFLICT,
+    /** 服务端哈希线程池已排满。 */
+    SERVER_BUSY,
     /** 认证总超时。 */
     TIMEOUT,
     /** 账号存储等内部故障。 */

@@ -79,15 +79,16 @@ com.mtmrails.trustedserver.core
 ```
 com.mtmrails.trustedserver.server
 ├── account/
-│   ├── AccountService               实现 core 的 AccountGateway：绑定、校验密码、设定密码（解除受限）、找回重绑、管理员 reset / trust
-│   ├── Account (record)             对应 players 表
-│   └── PlayerId                     正版用 UUID，离线用小写用户名
+│   ├── AccountService               实现 core 的 AccountGateway；游戏内 /passwd、/recoverypasswd；管理员 reset / trust；
+│   │                                登录成功记录；累计错误锁定。Argon2id 在哈希线程池执行，数据库操作在单一写线程执行
+│   ├── AccountServiceConfig         线程数、排队上限、锁定阈值与时长、审计保留期
+│   └── AdminResult                  管理员命令结果
 ├── password/
-│   └── PasswordHasher               Argon2id；PHC 格式编码串；参数可配置；支持日后升级参数时重新哈希
+│   ├── PasswordHasher               Argon2id；PHC 格式编码串；参数可配置；按串内参数校验，needsRehash 支持参数升级
+│   └── PasswordPolicy               长度 6–128 码点；登录密码与找回密码不能相同
 ├── store/
-│   ├── AccountStore / LockoutStore / AuditLog      接口
-│   ├── sqlite/                      SQLite 实现；表结构版本号 + 迁移脚本
-│   └── memory/                      内存实现，供测试使用
+│   ├── Account (record)             对应 players 表
+│   └── SqliteStore                  players / lockouts / audit_log；user_version 迁移；WAL；直接实例化 org.sqlite.JDBC
 ├── policy/
 │   ├── RateLimiter                  按 IP 的令牌桶，覆盖 Ping 和登录
 │   ├── LockoutPolicy                按用户名和 IP 统计密码失败次数并锁定
@@ -172,6 +173,9 @@ public final class SecureMessageChannel {
 - 任何协议、密码学或账号存储失败都会废弃本连接的所有通道与会话密钥（PROTOCOL.md 4.3.3）
 - 公钥不一致时：本连接通过 Mojang 验证（`mojangVerified`）则直接改绑到新设备（`RebindReason.ONLINE_MODE_IDENTITY`），否则须输对找回密码（`RebindReason.RECOVERY`）。`mojangVerified` 与 `onlineMode` 分开传入：正版服务器上 session 无效的连接 `onlineMode = true`、`mojangVerified = false`，按无验证回退
 - 改绑一律推迟到整个认证成功前才提交：已设登录密码时，登录密码也须验证通过，避免只掌握找回密码（或只掌握正版账号）、却输错登录密码的一方改掉原有绑定。`Accepted.reboundBy` 记录本次改绑原因，Finish 下发 `rebindNotice` 提示
+- 账号存在但绑定已被管理员清空时（`AccountView.keyBound()` 为假），按 `RebindReason.KEY_RESET` 处理：已设登录密码则先验证，再用 `claimUnboundKey` 原子绑定，被抢先时按 `ACCOUNT_CONFLICT` 拒绝
+- `setLoginPassword` 返回是否符合密码规则；不符合时重新发 SET，连续不符合达到 `maxPasswordAttempts` 次按跳过处理
+- 账号存储线程池排满（`RejectedExecutionException`，无论同步抛出还是 future 失败）按 `SERVER_BUSY` 拒绝
 - 每种密码（登录 / 找回）在一个连接上各有 `maxPasswordAttempts` 次机会；找回成功后转入登录密码时次数重新计算。跨连接的锁定由 `AccountGateway.passwordFailed(…, exhausted)` 的实现负责
 - 可信握手完成前，拒绝原因只在内部和审计日志中使用；服务端对外统一使用配置的拒绝文本（模仿原版封禁或自定义）。服务端成功解密 ClientProof 并验证其对当前 transcript 的签名后，才允许提供具体原因；这只是模型 A 的协议验证边界，不代表公钥绑定、密码认证已经通过，更不能提前放行。具体错误的受保护传输格式另行定义。
 
@@ -190,7 +194,7 @@ CompletableFuture<Step> ◄─────────────────�
 发送下一条 query，或断开 / 放行
 ```
 
-- `authExecutor` 的线程数和排队上限可配置；队列满时新连接直接按 `RATE_LIMITED` 拒绝，避免被大量连接拖垮
+- 哈希线程池默认 4 个线程、排队上限 64，可配置；排满时按 `SERVER_BUSY` 拒绝，避免被大量连接拖垮。数据库操作在单一线程上串行执行
 - Argon2id 默认参数取 OWASP 推荐的下限：m = 19 MiB、t = 2、p = 1（可配置）。同时进行的哈希数量受线程池大小限制，内存占用可控
 - 游戏阶段的 `/passwd` 同样交给 `authExecutor` 处理，结果切回服务端主线程后再改动玩家的权限状态
 
@@ -198,8 +202,8 @@ CompletableFuture<Step> ◄─────────────────�
 
 | 依赖 | 用于 | 方式 |
 |---|---|---|
-| Bouncy Castle `bcprov` | 只用 Argon2id | shade、重定位（relocate），并裁剪为只含 Argon2 相关的类 |
-| `sqlite-jdbc` | 玩家数据 | jar-in-jar 打包；自带各平台的原生库，体积约 10 MB 以上，可考虑裁剪掉少见平台 |
+| Bouncy Castle `bcprov-jdk18on` 1.78.1 | 只用 Argon2id | 完整 jar 约 8.3 MB；打包时 shade、重定位（relocate），并裁剪为只含 Argon2 相关的类 |
+| `sqlite-jdbc` 3.46.1.0 | 玩家数据 | jar-in-jar 打包；自带各平台的原生库，约 14 MB，暂不裁剪；无其他传递依赖 |
 | Gson | JSON 配置 | `compileOnly`，运行时使用 Minecraft 自带的版本 |
 | JUnit 5 | 测试 | 仅测试 |
 
@@ -236,7 +240,7 @@ CompletableFuture<Step> ◄─────────────────�
 | 3 | `crypto` | 通过 RFC 测试向量；冻结的已知答案向量；`AeadStream` / `SecureMessageChannel` 的隔离、篡改、重放、乱序、长度边界与使用上限测试通过 |
 | 4 | `session` 状态机 + 测试用内存账号存储 | 端到端握手和攻击场景测试通过 |
 | 4b | `core-client`：`PlayerKeyStore` + `PlayerKeyBackup` | 存储、导出 / 导入、篡改、截断、冲突与迁移测试通过 |
-| 5 | `PasswordHasher` + SQLite 存储 | 契约测试和迁移测试通过 |
+| 5 | `PasswordHasher` + `PasswordPolicy` + `SqliteStore` + `AccountService` | 哈希向量、存储与迁移、管理员命令、锁定，以及用真实存储跑通完整握手的测试通过 |
 | 6 | `policy`、`status`、`config` | 策略测试通过；能生成带默认值的 JSON 配置 |
 | 7 | `TunnelFrameCodec` + 游戏阶段密码通道接入 | 隧道帧（长度 AAD、分片 / 合并、65536 字节上限、截断）和游戏阶段密码通道的测试通过 |
 
@@ -246,9 +250,9 @@ core 层全部完成后，再规划 `common` 层（Mixin 插入点、Netty 适�
 
 - **Argon2id 被用来消耗服务器资源**：攻击者装了 mod 后反复发送错误密码，迫使服务器做哈希计算。缓解：哈希前先检查限流和锁定；`authExecutor` 设上限；对同一连接限制重试次数
 - **SQLite 写入竞争**：开启 WAL 模式，所有写操作集中到单一写线程
+- **sqlite-jdbc 的 NULL 处理**：`getObject(列, Long.class)` 遇到 NULL 会抛异常，可空整数列一律用 `getLong` + `wasNull()` 读取
 - **Gson 版本差异**：1.18.2 自带的 Gson 较旧，只能使用其中稳定的基础 API
 
 ## 10. 待确认
 
-- Argon2id 默认参数是否沿用 OWASP 下限（m = 19 MiB、t = 2、p = 1）
-- 账号身份的选择：玩家从离线模式切换到正版模式时，以用户名为准还是以 UUID 为准（是否需要迁移已有记录）
+- （第 5 步的待确认项已按默认值确定，见 AGENTS.md 第 18 条）

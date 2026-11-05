@@ -27,6 +27,8 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 服务端认证状态机：一个连接一个实例（PROTOCOL.md 第 1、4 节）。
@@ -94,6 +96,7 @@ public final class ServerAuthSession {
     private RebindReason rebound;
     private PasswordRequest.Kind pendingKind;
     private int attemptsLeft;
+    private int setRejections;
 
     /**
      * @param accountId 账号 ID：正版为 UUID，离线为小写用户名
@@ -152,14 +155,20 @@ public final class ServerAuthSession {
         } catch (CryptoException e) {
             step = done(RejectReason.CRYPTO_FAILURE);
         } catch (RuntimeException e) {
-            step = done(RejectReason.INTERNAL_ERROR);
+            // 账号存储的线程池排满时，可能同步抛出 RejectedExecutionException 而不是返回失败的 future
+            step = done(isBusy(e) ? RejectReason.SERVER_BUSY : RejectReason.INTERNAL_ERROR);
         }
         return step
-                .exceptionally(t -> reject(RejectReason.INTERNAL_ERROR))
+                .exceptionally(t -> reject(isBusy(t) ? RejectReason.SERVER_BUSY : RejectReason.INTERNAL_ERROR))
                 .thenApply(s -> {
                     busy = false;
                     return timedOut ? enforceTimeout(s) : s;
                 });
+    }
+
+    private static boolean isBusy(Throwable t) {
+        Throwable cause = t instanceof CompletionException && t.getCause() != null ? t.getCause() : t;
+        return cause instanceof RejectedExecutionException;
     }
 
     /** 处理期间已超时：除已拒绝外一律改判超时，连同可能已生成的移交对象一起废弃。 */
@@ -255,6 +264,9 @@ public final class ServerAuthSession {
             });
         }
         account = found.get();
+        if (!account.keyBound()) {
+            return identityVerified(RebindReason.KEY_RESET);
+        }
         if (Arrays.equals(account.playerPub(), playerPub)) {
             return CompletableFuture.completedFuture(afterKeyMatched());
         }
@@ -307,9 +319,14 @@ public final class ServerAuthSession {
                 if (answer.skipped()) {
                     return CompletableFuture.completedFuture(finish());
                 }
-                return accounts.setLoginPassword(accountId, secret).thenApply(v -> {
-                    account = account.withLoginPassword();
-                    return finish();
+                return accounts.setLoginPassword(accountId, secret).thenApply(accepted -> {
+                    if (accepted) {
+                        account = account.withLoginPassword();
+                        return finish();
+                    }
+                    // 不符合密码规则：重新弹出设定框；连续不符合达到上限时按跳过处理
+                    setRejections++;
+                    return setRejections >= config.maxPasswordAttempts() ? finish() : sendPasswordRequest();
                 });
             case LOGIN:
                 if (answer.skipped()) {
@@ -337,7 +354,7 @@ public final class ServerAuthSession {
             pendingRebind = reason;
             return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.LOGIN));
         }
-        return commitRebind(reason).thenApply(v -> afterKeyMatched());
+        return commitRebind(reason).thenApply(bound -> bound ? afterKeyMatched() : reject(RejectReason.ACCOUNT_CONFLICT));
     }
 
     private CompletableFuture<ServerStep> loginSucceeded() {
@@ -346,13 +363,20 @@ public final class ServerAuthSession {
         }
         RebindReason reason = pendingRebind;
         pendingRebind = null;
-        return commitRebind(reason).thenApply(v -> finish());
+        return commitRebind(reason).thenApply(bound -> bound ? finish() : reject(RejectReason.ACCOUNT_CONFLICT));
     }
 
-    private CompletableFuture<Void> commitRebind(RebindReason reason) {
-        return accounts.rebind(accountId, playerPub, reason).thenRun(() -> {
-            account = account.withPlayerPub(playerPub);
-            rebound = reason;
+    /** 提交改绑；管理员清空后的重新绑定须原子地抢占，被并发连接抢先时返回 {@code false}。 */
+    private CompletableFuture<Boolean> commitRebind(RebindReason reason) {
+        CompletableFuture<Boolean> committed = reason == RebindReason.KEY_RESET
+                ? accounts.claimUnboundKey(accountId, playerPub)
+                : accounts.rebind(accountId, playerPub, reason).thenApply(v -> true);
+        return committed.thenApply(bound -> {
+            if (bound) {
+                account = account.withPlayerPub(playerPub);
+                rebound = reason;
+            }
+            return bound;
         });
     }
 

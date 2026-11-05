@@ -349,6 +349,69 @@ class AuthSessionTest {
         assertTrue(accounts.rebinds.isEmpty());
     }
 
+    // ================= 管理员清空绑定、密码规则、繁忙 =================
+
+    @Test
+    void resetKeyAccountBindsNewDeviceAndKeepsRestriction() {
+        accounts.put("steve", null, true, null, "rec");
+        env.answer((String) null);
+        Handshake h = handshake().run();
+        AuthOutcome.Accepted accepted = h.accepted();
+        assertEquals(java.util.Optional.of(RebindReason.KEY_RESET), accepted.reboundBy());
+        assertTrue(accepted.restricted());
+        assertArrayEquals(h.clientPublicKey(), accounts.accounts.get("steve").playerPub);
+        assertEquals(List.of(PasswordRequest.Kind.SET), kinds(env));
+    }
+
+    @Test
+    void resetKeyAccountWithPasswordRequiresItBeforeBinding() {
+        accounts.put("steve", null, false, "secret", null);
+        env.answer("bad1", "bad2", "bad3");
+        Handshake h = handshake().run();
+        assertEquals(RejectReason.PASSWORD_ATTEMPTS_EXHAUSTED, h.rejected().reason());
+        assertEquals(null, accounts.accounts.get("steve").playerPub);
+
+        env.answer("secret");
+        Handshake second = handshake().run();
+        assertEquals(java.util.Optional.of(RebindReason.KEY_RESET), second.accepted().reboundBy());
+        assertArrayEquals(second.clientPublicKey(), accounts.accounts.get("steve").playerPub);
+    }
+
+    @Test
+    void resetKeyClaimLostToConcurrentConnection() {
+        accounts.put("steve", null, false, null, null);
+        accounts.loseBindRace = true;
+        assertEquals(new AuthOutcome.Rejected(RejectReason.ACCOUNT_CONFLICT, true), handshake().run().rejected());
+    }
+
+    @Test
+    void setPasswordViolatingPolicyIsPromptedAgain() {
+        accounts.minPasswordLength = 6;
+        env.answer("short", "long-enough");
+        Handshake h = handshake().run();
+        assertFalse(h.accepted().restricted());
+        assertEquals(List.of(PasswordRequest.Kind.SET, PasswordRequest.Kind.SET), kinds(env));
+        assertEquals("long-enough", accounts.accounts.get("steve").loginPassword);
+    }
+
+    @Test
+    void repeatedPolicyViolationsFallBackToSkip() {
+        accounts.minPasswordLength = 6;
+        env.answer("a", "b", "c");
+        Handshake h = handshake().run();
+        assertTrue(h.accepted().restricted());
+        assertEquals(3, env.prompts.size());
+    }
+
+    @Test
+    void fullHashingQueueIsServerBusy() {
+        accounts = new InMemoryAccounts(task -> {
+            throw new java.util.concurrent.RejectedExecutionException("queue full");
+        });
+        Handshake h = handshake().run();
+        assertEquals(new AuthOutcome.Rejected(RejectReason.SERVER_BUSY, true), h.rejected());
+    }
+
     // ================= 版本协商 =================
 
     private static byte[] rewriteServerHello(byte[] payload, java.util.function.UnaryOperator<ServerHello> f) {

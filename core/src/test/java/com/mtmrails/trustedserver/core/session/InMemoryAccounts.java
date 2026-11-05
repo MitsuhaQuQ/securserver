@@ -20,7 +20,7 @@ final class InMemoryAccounts implements AccountGateway {
         String recoveryPassword;
 
         Account(byte[] playerPub) {
-            this.playerPub = playerPub.clone();
+            this.playerPub = playerPub == null ? null : playerPub.clone();
         }
 
         AccountView view() {
@@ -39,6 +39,8 @@ final class InMemoryAccounts implements AccountGateway {
     boolean failNextCall;
     /** 模拟并发连接抢先绑定：bindNew 一律返回 false。 */
     boolean loseBindRace;
+    /** 模拟服务端密码规则：短于该长度的登录密码被拒绝。 */
+    int minPasswordLength;
 
     InMemoryAccounts(Executor executor) {
         this.executor = executor;
@@ -86,12 +88,29 @@ final class InMemoryAccounts implements AccountGateway {
     }
 
     @Override
-    public CompletableFuture<Void> setLoginPassword(String accountId, String password) {
+    public CompletableFuture<Boolean> setLoginPassword(String accountId, String password) {
         return async(() -> {
+            if (password.length() < minPasswordLength) {
+                return false;
+            }
             Account account = accounts.get(accountId);
             account.loginPassword = password;
             account.restricted = false;
-            return null;
+            return true;
+        });
+    }
+
+    @Override
+    public CompletableFuture<Boolean> claimUnboundKey(String accountId, byte[] playerPub) {
+        return async(() -> {
+            Account account = accounts.get(accountId);
+            synchronized (account) {
+                if (loseBindRace || account.playerPub != null) {
+                    return false;
+                }
+                account.playerPub = playerPub.clone();
+                return true;
+            }
         });
     }
 
