@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Optional;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -43,14 +42,9 @@ final class BackupExportPasswordScreen extends Screen {
         confirm.setFormatter((text, offset) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
         addRenderableWidget(password);
         addRenderableWidget(confirm);
-        addRenderableWidget(new Checkbox(center - 150, height / 2 + 12, 300, 20,
-                Component.literal("我了解风险，允许明文导出"), plaintextConfirmed) {
-            @Override
-            public void onPress() {
-                super.onPress();
-                plaintextConfirmed = selected();
-            }
-        });
+        addRenderableWidget(new RiskCheckbox(center - 150, height / 2 + 12, 300,
+                Component.literal("我了解风险，允许明文导出"), font, plaintextConfirmed,
+                selected -> plaintextConfirmed = selected));
         addRenderableWidget(Button.builder(Component.literal("导出"), b -> export())
                 .bounds(center - 150, height / 2 + 58, 145, 20).build());
         addRenderableWidget(Button.builder(Component.literal("取消"), b -> onClose())
@@ -91,7 +85,7 @@ final class BackupExportPasswordScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        graphics.fill(0, 0, width, height, 0xC0101010);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 90, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.literal("密码可留空，但拿到明文文件的人可以冒充你登录这些服务器"),
                 width / 2, height / 2 - 68, 0xFF5555);

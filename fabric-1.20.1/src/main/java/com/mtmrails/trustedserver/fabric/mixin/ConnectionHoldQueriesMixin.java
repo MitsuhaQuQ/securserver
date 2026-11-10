@@ -1,6 +1,7 @@
 package com.mtmrails.trustedserver.fabric.mixin;
 
 import com.mtmrails.trustedserver.core.message.Channel;
+import com.mtmrails.trustedserver.fabric.MinecraftAccess;
 import com.mtmrails.trustedserver.fabric.server.LoginFlow;
 import com.mtmrails.trustedserver.fabric.server.TrustedServerRuntime;
 import net.minecraft.network.Connection;
@@ -31,7 +32,7 @@ abstract class ConnectionHoldQueriesMixin {
             at = @At("HEAD"), cancellable = true)
     private void trustedserver$holdForeignQueries(Packet<?> packet, PacketSendListener listener, CallbackInfo ci) {
         if (!(packet instanceof ClientboundCustomQueryPacket query)
-                || query.getIdentifier().getNamespace().equals(OWN_NAMESPACE)) {
+                || MinecraftAccess.loginQueryId(query).getNamespace().equals(OWN_NAMESPACE)) {
             return;
         }
         TrustedServerRuntime runtime = TrustedServerRuntime.get();

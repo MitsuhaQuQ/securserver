@@ -2,12 +2,11 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.mtmrails.trustedserver.fabric.mixin",
-  "compatibilityLevel": "JAVA_17",
+  "compatibilityLevel": "${java_compatibility}",
   "mixins": [
     "ConnectionHoldQueriesMixin",
     "LegacyQueryHandlerMixin",
     "ServerLoginHelloMixin",
-    "ServerLoginPacketListenerAccessor",
     "ServerLoginSessionFallbackMixin",
     "ServerLoginTimeoutMixin",
     "ServerStatusPacketListenerMixin"
@@ -18,7 +17,6 @@
     "QueryThreadGs4Mixin",
     "RestrictedCommandsMixin",
     "RestrictedGameModeMixin",
-    "ServerGamePacketListenerAccessor",
     "ServerPermissionMixin",
     "SpawnProtectionMixin"
   ],

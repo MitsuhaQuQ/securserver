@@ -3,7 +3,8 @@ package com.mtmrails.trustedserver.fabric.server;
 import com.mtmrails.trustedserver.core.crypto.PskWire;
 import com.mtmrails.trustedserver.core.crypto.OnlineTokenWire;
 import com.mtmrails.trustedserver.core.message.Channel;
-import com.mtmrails.trustedserver.fabric.mixin.ServerLoginPacketListenerAccessor;
+import com.mtmrails.trustedserver.fabric.MinecraftAccess;
+import com.mtmrails.trustedserver.fabric.network.PlayPasswordNetworking;
 import com.mtmrails.trustedserver.server.account.PlayPasswordEndpoint;
 import java.util.UUID;
 import net.fabricmc.api.DedicatedServerModInitializer;
@@ -12,19 +13,13 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerLoginConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerLoginNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.network.Connection;
-import net.minecraft.network.FriendlyByteBuf;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.resources.ResourceLocation;
 
 /**
  * 独立服务端入口。内置服务器（单人游戏、局域网）不会调用它，因此认证只在独立服务端生效（AGENTS.md）。
  */
 public final class TrustedServerDedicated implements DedicatedServerModInitializer {
-    private static final ResourceLocation PASSWORD_CHANNEL = new ResourceLocation(Channel.PASSWORD.id());
-
     @Override
     public void onInitializeServer() {
         TrustedServerRuntime.start(FabricLoader.getInstance().getConfigDir());
@@ -44,7 +39,7 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
             }
             flow.start(sender, synchronizer);
         });
-        ServerLoginNetworking.registerGlobalReceiver(new ResourceLocation(PskWire.CHANNEL),
+        ServerLoginNetworking.registerGlobalReceiver(MinecraftAccess.resourceLocation(PskWire.CHANNEL),
                 (server, handler, understood, buf, synchronizer, responseSender) -> {
                     TrustedServerRuntime runtime = TrustedServerRuntime.get();
                     LoginFlow flow = runtime == null ? null : runtime.flows.get(handler);
@@ -52,7 +47,7 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
                         flow.onPskAnswer(understood, buf);
                     }
                 });
-        ServerLoginNetworking.registerGlobalReceiver(new ResourceLocation(OnlineTokenWire.CHANNEL),
+        ServerLoginNetworking.registerGlobalReceiver(MinecraftAccess.resourceLocation(OnlineTokenWire.CHANNEL),
                 (server, handler, understood, buf, synchronizer, responseSender) -> {
                     TrustedServerRuntime runtime = TrustedServerRuntime.get();
                     LoginFlow flow = runtime == null ? null : runtime.flows.get(handler);
@@ -61,7 +56,7 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
                     }
                 });
         for (Channel channel : Channel.values()) {
-            ServerLoginNetworking.registerGlobalReceiver(new ResourceLocation(channel.id()),
+            ServerLoginNetworking.registerGlobalReceiver(MinecraftAccess.resourceLocation(channel.id()),
                     (server, handler, understood, buf, synchronizer, responseSender) -> {
                         TrustedServerRuntime runtime = TrustedServerRuntime.get();
                         LoginFlow flow = runtime == null ? null : runtime.flows.get(handler);
@@ -78,7 +73,7 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
             }
             if (runtime != null) {
                 runtime.closePendingHandover(
-                        ((ServerLoginPacketListenerAccessor) handler).trustedserver$connection());
+                        MinecraftAccess.connection(handler));
             }
         });
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
@@ -91,11 +86,7 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
             runtime.openPasswordEndpoint(playerId, connection, new PlayPasswordEndpoint.Listener() {
                 @Override
                 public void send(byte[] payload) {
-                    server.execute(() -> {
-                        FriendlyByteBuf buf = PacketByteBufs.create();
-                        buf.writeBytes(payload);
-                        sender.sendPacket(PASSWORD_CHANNEL, buf);
-                    });
+                    server.execute(() -> PlayPasswordNetworking.sendServer(handler.getPlayer(), payload));
                 }
 
                 @Override
@@ -116,20 +107,17 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
             });
             runtime.notifySuspendedOp(handler.getPlayer());
         });
-        ServerPlayNetworking.registerGlobalReceiver(PASSWORD_CHANNEL,
-                (server, handler, serverPacketListener, buf, responseSender) -> {
+        PlayPasswordNetworking.registerServerReceiver((handler, payload) -> {
                     TrustedServerRuntime runtime = TrustedServerRuntime.get();
                     PlayPasswordEndpoint endpoint = runtime == null ? null
                             : runtime.passwordEndpoint(handler.getUUID(),
-                                    TrustedServerRuntime.connectionOf(serverPacketListener));
+                                    TrustedServerRuntime.connectionOf(handler.connection));
                     if (endpoint == null) {
                         if (runtime != null) {
                             handler.connection.disconnect(runtime.rejection());
                         }
                         return;
                     }
-                    byte[] payload = new byte[buf.readableBytes()];
-                    buf.readBytes(payload);
                     endpoint.onPayload(payload);
                 });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {

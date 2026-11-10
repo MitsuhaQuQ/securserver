@@ -10,7 +10,9 @@ import com.mtmrails.trustedserver.core.session.ClientFailure;
 import com.mtmrails.trustedserver.core.session.ClientResult;
 import com.mtmrails.trustedserver.core.session.ClientStep;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
+import com.mtmrails.trustedserver.fabric.MinecraftAccess;
 import com.mtmrails.trustedserver.fabric.mixin.ClientHandshakePacketListenerAccessor;
+import com.mtmrails.trustedserver.fabric.network.PlayPasswordNetworking;
 import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
 import java.security.SecureRandom;
 import java.util.Map;
@@ -19,7 +21,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.ChatFormatting;
@@ -29,7 +30,6 @@ import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.network.Connection;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 
 /**
  * 客户端登录阶段：把服务端的 query 交给 {@link ClientAuthSession}，把结果写回。
@@ -41,15 +41,13 @@ final class ClientLoginHandler {
     private final Map<ClientHandshakePacketListenerImpl, ClientAuthSession> sessions = new ConcurrentHashMap<>();
     private final Map<Connection, ClientResult> completed = new ConcurrentHashMap<>();
     private final Map<Connection, PlayPasswordClient> playPasswords = new ConcurrentHashMap<>();
-    private static final ResourceLocation PASSWORD_CHANNEL = new ResourceLocation(Channel.PASSWORD.id());
-
     ClientLoginHandler(FabricClientEnvironment environment) {
         this.environment = environment;
     }
 
     void register() {
         for (Channel channel : Channel.values()) {
-            ClientLoginNetworking.registerGlobalReceiver(new ResourceLocation(channel.id()),
+            ClientLoginNetworking.registerGlobalReceiver(MinecraftAccess.resourceLocation(channel.id()),
                     (client, handler, buf, listenerAdder) -> onQuery(channel, client, handler, buf));
         }
         ClientLoginConnectionEvents.DISCONNECT.register((handler, client) -> {
@@ -86,12 +84,14 @@ final class ClientLoginHandler {
                 result.handover().close();
             }
         });
-        ClientPlayNetworking.registerGlobalReceiver(PASSWORD_CHANNEL, (client, handler, buf, responseSender) -> {
-            byte[] payload = new byte[buf.readableBytes()];
-            buf.readBytes(payload);
-            Connection connection = handler.getConnection();
+        PlayPasswordNetworking.registerClientReceiver(payload -> {
+            Minecraft client = Minecraft.getInstance();
+            if (client.getConnection() == null) {
+                return;
+            }
+            Connection connection = client.getConnection().getConnection();
             client.execute(() -> {
-                if (client.getConnection() == handler) {
+                if (client.getConnection() != null && client.getConnection().getConnection() == connection) {
                     onPasswordResult(connection, payload);
                 }
             });
@@ -125,9 +125,7 @@ final class ClientLoginHandler {
         }
         try {
             byte[] payload = passwordClient.request((PasswordCommand.Set) command);
-            FriendlyByteBuf buf = PacketByteBufs.create();
-            buf.writeBytes(payload);
-            ClientPlayNetworking.send(PASSWORD_CHANNEL, buf);
+            PlayPasswordNetworking.sendClient(payload);
             display("正在安全地提交密码……", ChatFormatting.GRAY);
         } catch (CryptoException | IllegalArgumentException | IllegalStateException e) {
             TrustedServerFabric.LOGGER.warn("Cannot send play password request: {}", e.getClass().getSimpleName());

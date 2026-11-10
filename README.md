@@ -2,7 +2,7 @@
 
 面向 Minecraft Java 独立服务器的客户端/服务端安全 mod。TrustedServer 在玩家进入游戏前增加可信握手、身份绑定、密码恢复和网络限流，用于减少通用扫描器、自动登录机器人和批量漏洞利用脚本带来的风险，同时隐藏服务器列表中的玩家名称。
 
-> 当前可运行版本为 **Fabric 1.20.1**。客户端和服务端都必须安装本 mod；未安装客户端 mod 的连接会被拒绝。本项目仍在开发中，不建议在没有备份和测试的情况下直接用于生产服务器。
+> `v0.2.0` 提供 Fabric 1.20.1、1.20.2、1.20.4、1.21.1 构建。客户端和服务端都必须安装本 mod；未安装客户端 mod 的连接会被拒绝。本项目仍在开发中，不建议在没有备份和测试的情况下直接用于生产服务器。
 
 ## 功能概览
 
@@ -22,7 +22,11 @@
 
 | 平台 | 版本 | 状态 |
 |---|---:|---|
-| Fabric | 1.20.1 | 已接入，当前开发基准 |
+| Fabric | 1.20.1 | 已接入并完成基础联调 |
+| Fabric | 1.20.2 | 实验适配，构建通过，待手工联调 |
+| Fabric | 1.20.4 | 实验适配，构建通过，待手工联调 |
+| Fabric | 1.21.1 | 实验适配，构建通过，待手工联调 |
+| Fabric | 26.3+ | 在独立仓库 [`MitsuhaQuQ/trustedserver_26`](https://github.com/MitsuhaQuQ/trustedserver_26) 迁移 |
 | Fabric | 1.18.2+ 的其他版本 | 计划支持 |
 | Forge | 1.18.2–1.19.4 | 计划支持 |
 | NeoForge | 1.20.1+ | 计划支持 |
@@ -93,9 +97,9 @@
 
 ## 安装与首次启动
 
-当前 Fabric 1.20.1 版本需要：
+当前 Fabric 1.20.1、1.20.2、1.20.4 和 1.21.1 构建需要：
 
-- Java 17 或更高版本；
+- Minecraft 1.20.x 使用 Java 17；Minecraft 1.21.1 使用 Java 21；
 - Fabric Loader；
 - Fabric API；
 - TrustedServer mod，客户端与服务端使用相同认证协议版本（推荐使用相同构建）；
@@ -202,18 +206,21 @@ Linux/macOS：
 ./gradlew build
 ```
 
-Fabric 1.20.1 的可安装 jar 输出到：
+各 Fabric 版本的可安装 jar 分别输出到对应模块：
 
 ```text
-fabric-1.20.1/build/libs/trustedserver-fabric-1.20.1-<版本>.jar
+fabric-<Minecraft 版本>/build/libs/trustedserver-fabric-<Minecraft 版本>-<mod 版本>.jar
 ```
 
-项目使用 Gradle 8.12 和 Java 17 toolchain。模块划分如下：
+项目使用 Gradle 8.12、Loom 1.10，并按目标版本选择 Java 17 或 21 toolchain。模块划分如下：
 
 - `core`：协议消息、密码通道、密码学、认证状态机和隧道编解码；
 - `core-client`：客户端 TOFU、设备密钥、PSK/令牌存储和密钥备份；
 - `core-server`：配置、策略、SQLite、Argon2id、账号与审计服务；
-- `fabric-1.20.1`：Minecraft/Fabric 登录、GUI、命令、权限和服务器列表适配。
+- `fabric-1.20.1`：共享的 Minecraft/Fabric 登录、GUI、命令、权限和服务器列表实现；
+- `fabric-legacy`：Fabric 1.20.x 的旧式频道 + ByteBuf 游戏阶段网络实现；
+- `fabric-1.20.2`、`fabric-1.20.4`：复用共享源码并提供各自的 Minecraft、Fabric API 和元数据构建目标；
+- `fabric-1.21.1`：使用 Java 21 与强类型 `CustomPacketPayload` 的常用大版本目标；
 
 ## 进一步阅读
 

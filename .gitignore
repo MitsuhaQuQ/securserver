@@ -7,3 +7,4 @@ run/
 .vscode/
 .DS_Store
 local.properties
+.codex-tmp/

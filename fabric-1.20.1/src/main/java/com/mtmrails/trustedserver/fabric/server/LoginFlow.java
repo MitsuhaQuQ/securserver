@@ -12,8 +12,9 @@ import com.mtmrails.trustedserver.core.session.RejectReason;
 import com.mtmrails.trustedserver.core.session.ServerAuthSession;
 import com.mtmrails.trustedserver.core.session.ServerStep;
 import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
+import com.mtmrails.trustedserver.fabric.MinecraftAccess;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
-import com.mtmrails.trustedserver.fabric.mixin.ServerLoginPacketListenerAccessor;
+import com.mtmrails.trustedserver.fabric.network.PlayPasswordNetworking;
 import com.mtmrails.trustedserver.server.policy.ConnectionGate;
 import java.net.InetAddress;
 import java.io.IOException;
@@ -59,7 +60,7 @@ public final class LoginFlow {
     private final Object lock = new Object();
     private final CompletableFuture<Void> authDone = new CompletableFuture<>();
 
-    private PacketSender sender;
+    private Object sender;
     private InetAddress address;
     private GameProfile profile;
     private PresharedKeyHandshake.Server psk;
@@ -109,8 +110,8 @@ public final class LoginFlow {
      * @return 是否放行；不放行时已断开
      */
     boolean onHello() {
-        ServerLoginPacketListenerAccessor access = (ServerLoginPacketListenerAccessor) handler;
-        address = TrustedServerRuntime.inet(access.trustedserver$connection().getRemoteAddress())
+        Connection connection = MinecraftAccess.connection(handler);
+        address = TrustedServerRuntime.inet(connection.getRemoteAddress())
                 .orElse(InetAddress.getLoopbackAddress());
         ConnectionGate.Verdict verdict = runtime.gate().beginLogin(address);
         if (verdict != ConnectionGate.Verdict.ALLOW) {
@@ -118,7 +119,7 @@ public final class LoginFlow {
             return false;
         }
         gateSlot = true;
-        if (server.getPlayerList().getIpBans().isBanned(access.trustedserver$connection().getRemoteAddress())) {
+        if (server.getPlayerList().getIpBans().isBanned(connection.getRemoteAddress())) {
             rejectBeforeHandshake("ip banned");
             return false;
         }
@@ -140,7 +141,7 @@ public final class LoginFlow {
     }
 
     /** Fabric 的 QUERY_START：完成封禁检查后启动第一阶段 PSK 门禁。 */
-    void start(PacketSender sender, ServerLoginNetworking.LoginSynchronizer synchronizer) {
+    void start(Object sender, ServerLoginNetworking.LoginSynchronizer synchronizer) {
         this.sender = sender;
         synchronizer.waitFor(authDone);
         synchronized (lock) {
@@ -148,7 +149,7 @@ public final class LoginFlow {
                 return;
             }
         }
-        GameProfile raw = ((ServerLoginPacketListenerAccessor) handler).trustedserver$gameProfile();
+        GameProfile raw = MinecraftAccess.loginProfile(handler);
         if (raw == null) {
             rejectBeforeHandshake("no game profile");
             return;
@@ -435,7 +436,7 @@ public final class LoginFlow {
             held.clear();
             if (accepted != null) {
                 runtime.registerHandover(
-                        ((ServerLoginPacketListenerAccessor) handler).trustedserver$connection(), accepted);
+                        MinecraftAccess.connection(handler), accepted);
             }
         }
         cancelTimeout();
@@ -500,27 +501,21 @@ public final class LoginFlow {
     }
 
     private static void release(Packet<?> packet) {
-        if (packet instanceof ClientboundCustomQueryPacket query && query.getData() != null) {
-            query.getData().release();
+        if (packet instanceof ClientboundCustomQueryPacket query) {
+            MinecraftAccess.releaseLoginQuery(query);
         }
     }
 
     private void sendPsk(byte[] payload) {
-        FriendlyByteBuf buf = PacketByteBufs.create();
-        buf.writeBytes(payload);
-        sender.sendPacket(new ResourceLocation(PskWire.CHANNEL), buf);
+        PlayPasswordNetworking.sendLoginQuery(sender, PskWire.CHANNEL, payload);
     }
 
     private void sendOnline(byte[] payload) {
-        FriendlyByteBuf buf = PacketByteBufs.create();
-        buf.writeBytes(payload);
-        sender.sendPacket(new ResourceLocation(OnlineTokenWire.CHANNEL), buf);
+        PlayPasswordNetworking.sendLoginQuery(sender, OnlineTokenWire.CHANNEL, payload);
     }
 
     private void sendFormal(Outbound outbound) {
-        FriendlyByteBuf buf = PacketByteBufs.create();
-        buf.writeBytes(outbound.payload());
-        sender.sendPacket(new ResourceLocation(outbound.channel().id()), buf);
+        PlayPasswordNetworking.sendLoginQuery(sender, outbound.channel().id(), outbound.payload());
     }
 
     private void clearIssuedToken() {

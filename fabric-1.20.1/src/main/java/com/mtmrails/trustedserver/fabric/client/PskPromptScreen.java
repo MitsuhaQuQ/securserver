@@ -77,7 +77,7 @@ final class PskPromptScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        graphics.fill(0, 0, width, height, 0xC0101010);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 72, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.literal("服务器：" + address), width / 2,
                 height / 2 - 52, 0xA0A0A0);

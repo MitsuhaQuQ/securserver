@@ -4,6 +4,7 @@ import com.mtmrails.trustedserver.client.PresharedKeys;
 import com.mtmrails.trustedserver.core.crypto.PresharedKeyHandshake;
 import com.mtmrails.trustedserver.core.crypto.PskAuthenticationException;
 import com.mtmrails.trustedserver.core.crypto.PskWire;
+import com.mtmrails.trustedserver.fabric.MinecraftAccess;
 import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
 import java.io.IOException;
@@ -39,7 +40,7 @@ final class PskLoginHandler {
     }
 
     void register() {
-        ClientLoginNetworking.registerGlobalReceiver(new ResourceLocation(PskWire.CHANNEL),
+        ClientLoginNetworking.registerGlobalReceiver(MinecraftAccess.resourceLocation(PskWire.CHANNEL),
                 (client, handler, buf, listenerAdder) -> onQuery(client, handler, buf));
         ClientLoginConnectionEvents.DISCONNECT.register((handler, client) -> close(handler));
     }

@@ -161,7 +161,7 @@ final class PasswordPromptScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        graphics.fill(0, 0, width, height, 0xC0101010);
         int remaining = (int) Math.max(0, (deadlineMillis - Util.getMillis() + 999) / 1000);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 88, 0xFFFFFF);
         String description = confirmingClear ? "确认后将移除本账号的登录密码" : descriptionFor(request.kind());

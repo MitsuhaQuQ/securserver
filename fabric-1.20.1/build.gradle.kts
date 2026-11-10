@@ -11,6 +11,10 @@ repositories {
     maven("https://maven.terraformersmc.com/releases/")
 }
 
+sourceSets.main {
+    java.srcDir("../fabric-legacy/src/main/java")
+}
+
 dependencies {
     "minecraft"("com.mojang:minecraft:1.20.1")
     "mappings"(loom.officialMojangMappings())
@@ -39,8 +43,14 @@ loom {
 
 tasks.processResources {
     inputs.property("version", project.version)
+    inputs.property("minecraft_dependency", "~1.20.1")
+    inputs.property("java_dependency", ">=17")
+    inputs.property("java_compatibility", "JAVA_17")
     filesMatching("fabric.mod.json") {
-        expand("version" to project.version)
+        expand("version" to project.version, "minecraft_dependency" to "~1.20.1", "java_dependency" to ">=17")
+    }
+    filesMatching("trustedserver.mixins.json") {
+        expand("java_compatibility" to "JAVA_17")
     }
 }
 

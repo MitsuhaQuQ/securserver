@@ -2,6 +2,7 @@ package com.mtmrails.trustedserver.fabric.client;
 
 import com.mtmrails.trustedserver.client.OnlineTokens;
 import com.mtmrails.trustedserver.core.crypto.OnlineTokenWire;
+import com.mtmrails.trustedserver.fabric.MinecraftAccess;
 import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
 import java.io.IOException;
@@ -32,7 +33,7 @@ final class OnlineTokenLoginHandler {
     }
 
     void register() {
-        ClientLoginNetworking.registerGlobalReceiver(new ResourceLocation(OnlineTokenWire.CHANNEL),
+        ClientLoginNetworking.registerGlobalReceiver(MinecraftAccess.resourceLocation(OnlineTokenWire.CHANNEL),
                 (client, handler, buf, listenerAdder) -> onQuery(client, handler, buf));
         ClientLoginConnectionEvents.DISCONNECT.register((handler, client) -> pending.remove(handler));
     }

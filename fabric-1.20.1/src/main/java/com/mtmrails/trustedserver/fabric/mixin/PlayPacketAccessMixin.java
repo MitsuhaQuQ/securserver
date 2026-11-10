@@ -6,7 +6,6 @@ import com.mtmrails.trustedserver.fabric.server.TrustedServerRuntime;
 import net.minecraft.network.protocol.game.ClientboundCommandSuggestionsPacket;
 import net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
-import net.minecraft.network.chat.LastSeenMessages;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.server.players.PlayerList;
@@ -21,9 +20,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class PlayPacketAccessMixin {
     @Shadow public ServerPlayer player;
 
-    @Inject(method = "performChatCommand", at = @At("HEAD"), cancellable = true)
-    private void trustedserver$discardDisconnectedCommand(ServerboundChatCommandPacket packet,
-            LastSeenMessages lastSeen, CallbackInfo ci) {
+    @Inject(method = "handleChatCommand", at = @At("HEAD"), cancellable = true)
+    private void trustedserver$discardDisconnectedCommand(ServerboundChatCommandPacket packet, CallbackInfo ci) {
         if (TrustedServerRuntime.get() != null && !player.connection.isAcceptingMessages()) {
             ci.cancel();
         }

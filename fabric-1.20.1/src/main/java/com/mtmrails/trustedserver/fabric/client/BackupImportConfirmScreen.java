@@ -52,7 +52,7 @@ final class BackupImportConfirmScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        graphics.fill(0, 0, width, height, 0xC0101010);
         long missing = preview.entries().stream()
                 .filter(e -> e.disposition() == PlayerKeyBackupManager.Disposition.MISSING).count();
         long identical = preview.entries().stream()

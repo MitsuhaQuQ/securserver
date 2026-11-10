@@ -3,8 +3,8 @@ package com.mtmrails.trustedserver.fabric.server;
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
 import com.mtmrails.trustedserver.core.session.AuthOutcome;
 import com.mtmrails.trustedserver.core.session.ServerAuthConfig;
+import com.mtmrails.trustedserver.fabric.MinecraftAccess;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
-import com.mtmrails.trustedserver.fabric.mixin.ServerGamePacketListenerAccessor;
 import com.mtmrails.trustedserver.server.ServerIdentity;
 import com.mtmrails.trustedserver.server.PresharedKeyFile;
 import com.mtmrails.trustedserver.server.OnlineTokenStore;
@@ -318,7 +318,7 @@ public final class TrustedServerRuntime {
     }
 
     static Connection connectionOf(ServerGamePacketListenerImpl listener) {
-        return ((ServerGamePacketListenerAccessor) listener).trustedserver$connection();
+        return MinecraftAccess.connection(listener);
     }
 
     String playAccountId(ServerPlayer player) {

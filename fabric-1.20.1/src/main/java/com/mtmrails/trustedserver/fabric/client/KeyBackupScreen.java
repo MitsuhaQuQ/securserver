@@ -132,7 +132,7 @@ final class KeyBackupScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        graphics.fill(0, 0, width, height, 0xC0101010);
         graphics.drawCenteredString(font, title, width / 2, 20, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.literal("默认全选；备份不包含登录密码或服务器私钥"),
                 width / 2, 33, 0xA0A0A0);
