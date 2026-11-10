@@ -8,6 +8,7 @@ import com.mtmrails.trustedserver.server.ServerIdentity;
 import com.mtmrails.trustedserver.server.PresharedKeyFile;
 import com.mtmrails.trustedserver.server.OnlineTokenStore;
 import com.mtmrails.trustedserver.server.account.AccountService;
+import com.mtmrails.trustedserver.server.account.PlayPasswordEndpoint;
 import com.mtmrails.trustedserver.server.config.ConfigException;
 import com.mtmrails.trustedserver.server.config.ConfigLoader;
 import com.mtmrails.trustedserver.server.config.RejectionText;
@@ -53,7 +54,11 @@ public final class TrustedServerRuntime {
     private final SecureRandom random = new SecureRandom();
     private final ScheduledExecutorService scheduler;
     final Map<ServerLoginPacketListenerImpl, LoginFlow> flows = new ConcurrentHashMap<>();
-    private final Map<UUID, SessionHandover> handovers = new ConcurrentHashMap<>();
+    private record PendingHandover(String accountId, SessionHandover handover) {
+    }
+
+    private final Map<UUID, PendingHandover> handovers = new ConcurrentHashMap<>();
+    private final Map<UUID, PlayPasswordEndpoint> passwordEndpoints = new ConcurrentHashMap<>();
 
     private TrustedServerRuntime(ServerConfig config, ServerIdentity.Loaded identity,
             PresharedKeyFile.Loaded psk, OnlineTokenStore onlineTokens, AccountService accounts) {
@@ -132,7 +137,8 @@ public final class TrustedServerRuntime {
         instance = null;
         if (runtime != null) {
             runtime.scheduler.shutdownNow();
-            runtime.handovers.values().forEach(SessionHandover::close);
+            runtime.handovers.values().forEach(pending -> pending.handover().close());
+            runtime.passwordEndpoints.values().forEach(PlayPasswordEndpoint::close);
             runtime.accounts.close();
             Arrays.fill(runtime.psk, (byte) 0);
         }
@@ -251,17 +257,40 @@ public final class TrustedServerRuntime {
         return flows.get(handler);
     }
 
-    void registerHandover(UUID player, SessionHandover handover) {
-        SessionHandover previous = handovers.put(player, handover);
+    void registerHandover(UUID player, String accountId, SessionHandover handover) {
+        PendingHandover previous = handovers.put(player, new PendingHandover(accountId, handover));
         if (previous != null) {
-            previous.close();
+            previous.handover().close();
         }
     }
 
+    PlayPasswordEndpoint openPasswordEndpoint(UUID player, PlayPasswordEndpoint.Listener listener) {
+        PendingHandover pending = handovers.remove(player);
+        if (pending == null) {
+            return null;
+        }
+        PlayPasswordEndpoint endpoint = new PlayPasswordEndpoint(pending.accountId(),
+                pending.handover().passwordChannel(), accounts, listener, Clock.systemUTC(),
+                authConfig.validation().loginPassword(), authConfig.validation().recoveryPassword());
+        PlayPasswordEndpoint previous = passwordEndpoints.put(player, endpoint);
+        if (previous != null) {
+            previous.close();
+        }
+        return endpoint;
+    }
+
+    PlayPasswordEndpoint passwordEndpoint(UUID player) {
+        return passwordEndpoints.get(player);
+    }
+
     void closeHandover(UUID player) {
-        SessionHandover handover = handovers.remove(player);
-        if (handover != null) {
-            handover.close();
+        PlayPasswordEndpoint endpoint = passwordEndpoints.remove(player);
+        if (endpoint != null) {
+            endpoint.close();
+        }
+        PendingHandover pending = handovers.remove(player);
+        if (pending != null) {
+            pending.handover().close();
         }
     }
 

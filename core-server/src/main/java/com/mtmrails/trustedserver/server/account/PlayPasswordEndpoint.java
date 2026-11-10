@@ -42,17 +42,26 @@ public final class PlayPasswordEndpoint {
     private final AccountService accounts;
     private final Listener listener;
     private final Clock clock;
+    private final boolean loginEnabled;
+    private final boolean recoveryEnabled;
     private final Deque<Long> recent = new ArrayDeque<>();
     private boolean inFlight;
     private boolean closed;
 
     public PlayPasswordEndpoint(String accountId, SecureMessageChannel channel, AccountService accounts,
             Listener listener, Clock clock) {
+        this(accountId, channel, accounts, listener, clock, true, true);
+    }
+
+    public PlayPasswordEndpoint(String accountId, SecureMessageChannel channel, AccountService accounts,
+            Listener listener, Clock clock, boolean loginEnabled, boolean recoveryEnabled) {
         this.accountId = Objects.requireNonNull(accountId, "accountId");
         this.channel = Objects.requireNonNull(channel, "channel");
         this.accounts = Objects.requireNonNull(accounts, "accounts");
         this.listener = Objects.requireNonNull(listener, "listener");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.loginEnabled = loginEnabled;
+        this.recoveryEnabled = recoveryEnabled;
     }
 
     /** 收到客户端发来的密码通道 payload。 */
@@ -70,6 +79,11 @@ public final class PlayPasswordEndpoint {
             }
             if (!(message instanceof SetPassword) && !(message instanceof SetRecoveryPassword)) {
                 kick();
+                return;
+            }
+            if ((message instanceof SetPassword && !loginEnabled)
+                    || (message instanceof SetRecoveryPassword && !recoveryEnabled)) {
+                reply(new PasswordResult(PasswordResult.Status.REJECTED, "此密码验证层未启用"));
                 return;
             }
             if (inFlight || !withinRate()) {

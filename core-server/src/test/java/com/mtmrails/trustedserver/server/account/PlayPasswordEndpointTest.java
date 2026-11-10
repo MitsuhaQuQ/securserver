@@ -96,6 +96,23 @@ class PlayPasswordEndpointTest {
     }
 
     @Test
+    void disabledValidationLayerIsRejected() throws Exception {
+        byte[] shared = new byte[32];
+        new SecureRandom().nextBytes(shared);
+        SessionKeys keys = SessionKeys.derive(shared, new byte[32], new byte[32], new byte[32]);
+        client = keys.passwordChannel(Side.CLIENT);
+        endpoint = new PlayPasswordEndpoint("steve", keys.passwordChannel(Side.SERVER), service,
+                new PlayPasswordEndpoint.Listener() {
+                    @Override public void send(byte[] payload) { sent.add(payload); }
+                    @Override public void passwordSet(boolean login) { passwordSet.add(login); }
+                    @Override public void kick() { kicks.incrementAndGet(); }
+                }, clock, true, false);
+        endpoint.onPayload(client.seal(new SetRecoveryPassword("recovery pw")));
+        assertEquals(PasswordResult.Status.REJECTED, nextResult().status());
+        assertFalse(service.find("steve").join().orElseThrow().hasRecoveryPassword());
+    }
+
+    @Test
     void policyViolationIsRejectedWithReason() throws Exception {
         endpoint.onPayload(client.seal(new SetPassword("abc")));
         PasswordResult result = nextResult();

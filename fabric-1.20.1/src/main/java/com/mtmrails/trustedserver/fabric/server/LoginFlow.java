@@ -428,7 +428,7 @@ public final class LoginFlow {
             toSend = new ArrayList<>(held);
             held.clear();
             if (accepted != null) {
-                runtime.registerHandover(profile.getId(), accepted.handover());
+                runtime.registerHandover(profile.getId(), accepted.accountId(), accepted.handover());
             }
         }
         cancelTimeout();

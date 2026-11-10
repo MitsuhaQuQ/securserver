@@ -137,6 +137,20 @@ class AuthSessionTest {
     }
 
     @Test
+    void optionalLoginPasswordDoesNotRejectAccountWithoutPassword() {
+        accounts.put("steve", clientKey(), true, null, null);
+        Handshake h = handshake();
+        h.config = new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.DISABLED,
+                new ServerAuthConfig.ValidationLevels(true, true, false, false),
+                3, 60, CONFIG.restrictedNotice(), CONFIG.recoveryReminderNotice(), CONFIG.rebindNotice());
+        h.run();
+
+        assertTrue(env.prompts.isEmpty());
+        assertFalse(h.accepted().hasLoginPassword());
+        assertFalse(h.accepted().restricted());
+    }
+
+    @Test
     void correctLoginPassword() {
         accounts.put("steve", clientKey(), false, "pw", null);
         env.answer("pw");

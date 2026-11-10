@@ -1,12 +1,17 @@
 package com.mtmrails.trustedserver.fabric.client;
 
+import com.mtmrails.trustedserver.client.PasswordCommand;
+import com.mtmrails.trustedserver.client.PlayPasswordClient;
+import com.mtmrails.trustedserver.core.crypto.CryptoException;
 import com.mtmrails.trustedserver.core.message.Channel;
+import com.mtmrails.trustedserver.core.message.PasswordResult;
 import com.mtmrails.trustedserver.core.session.ClientAuthSession;
 import com.mtmrails.trustedserver.core.session.ClientFailure;
 import com.mtmrails.trustedserver.core.session.ClientResult;
 import com.mtmrails.trustedserver.core.session.ClientStep;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
 import com.mtmrails.trustedserver.fabric.mixin.ClientHandshakePacketListenerAccessor;
+import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
 import java.security.SecureRandom;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -14,6 +19,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -33,6 +40,8 @@ final class ClientLoginHandler {
     private final SecureRandom random = new SecureRandom();
     private final Map<ClientHandshakePacketListenerImpl, ClientAuthSession> sessions = new ConcurrentHashMap<>();
     private final Map<Connection, ClientResult> completed = new ConcurrentHashMap<>();
+    private final Map<Connection, PlayPasswordClient> playPasswords = new ConcurrentHashMap<>();
+    private static final ResourceLocation PASSWORD_CHANNEL = new ResourceLocation(Channel.PASSWORD.id());
 
     ClientLoginHandler(FabricClientEnvironment environment) {
         this.environment = environment;
@@ -55,6 +64,10 @@ final class ClientLoginHandler {
         });
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             ClientResult result = completed.get(handler.getConnection());
+            if (result != null) {
+                playPasswords.put(handler.getConnection(),
+                        new PlayPasswordClient(result.handover().passwordChannel()));
+            }
             if (result != null && !result.notices().isEmpty()) {
                 client.execute(() -> {
                     if (client.player != null) {
@@ -67,11 +80,79 @@ final class ClientLoginHandler {
             }
         });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            playPasswords.remove(handler.getConnection());
             ClientResult result = completed.remove(handler.getConnection());
             if (result != null) {
                 result.handover().close();
             }
         });
+        ClientPlayNetworking.registerGlobalReceiver(PASSWORD_CHANNEL,
+                (client, handler, buf, responseSender) -> onPasswordResult(client, handler.getConnection(), buf));
+        ClientSendMessageEvents.ALLOW_COMMAND.register(this::interceptPasswordCommand);
+    }
+
+    /** 密码命令始终在本地截获，绝不进入原版命令包或聊天日志。 */
+    private boolean interceptPasswordCommand(String commandLine) {
+        PasswordCommand command = PasswordCommand.parse("/" + commandLine);
+        if (command instanceof PasswordCommand.NotOurs) {
+            return true;
+        }
+        if (command instanceof PasswordCommand.Invalid invalid) {
+            display(invalid.reason(), ChatFormatting.RED);
+            return false;
+        }
+        Minecraft client = Minecraft.getInstance();
+        if (client.getConnection() == null) {
+            display("当前没有可用的安全密码通道", ChatFormatting.RED);
+            return false;
+        }
+        PlayPasswordClient passwordClient = playPasswords.get(client.getConnection().getConnection());
+        if (passwordClient == null) {
+            display("此服务器未建立 TrustedServer 安全密码通道，密码未发送", ChatFormatting.RED);
+            return false;
+        }
+        if (passwordClient.awaitingResult()) {
+            display("上一次密码操作仍在处理中", ChatFormatting.YELLOW);
+            return false;
+        }
+        try {
+            byte[] payload = passwordClient.request((PasswordCommand.Set) command);
+            FriendlyByteBuf buf = PacketByteBufs.create();
+            buf.writeBytes(payload);
+            ClientPlayNetworking.send(PASSWORD_CHANNEL, buf);
+            display("正在安全地提交密码……", ChatFormatting.GRAY);
+        } catch (CryptoException | IllegalArgumentException | IllegalStateException e) {
+            TrustedServerFabric.LOGGER.warn("Cannot send play password request: {}", e.getClass().getSimpleName());
+            display("密码请求发送失败", ChatFormatting.RED);
+        }
+        return false;
+    }
+
+    private void onPasswordResult(Minecraft client, Connection connection, FriendlyByteBuf buf) {
+        byte[] payload = new byte[buf.readableBytes()];
+        buf.readBytes(payload);
+        PlayPasswordClient passwordClient = playPasswords.get(connection);
+        if (passwordClient == null) {
+            connection.disconnect(Component.literal("TrustedServer 密码通道状态异常"));
+            return;
+        }
+        try {
+            PasswordResult result = passwordClient.onPayload(payload);
+            ChatFormatting color = result.status() == PasswordResult.Status.OK
+                    ? ChatFormatting.GREEN : ChatFormatting.RED;
+            display(result.message(), color);
+        } catch (CryptoException | MalformedMessageException e) {
+            playPasswords.remove(connection);
+            connection.disconnect(Component.literal("TrustedServer 密码通道验证失败"));
+        }
+    }
+
+    private static void display(String text, ChatFormatting color) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.player != null) {
+            client.player.displayClientMessage(
+                    Component.literal("[TrustedServer] " + text).withStyle(color), false);
+        }
     }
 
     private CompletableFuture<FriendlyByteBuf> onQuery(Channel channel, Minecraft client,
