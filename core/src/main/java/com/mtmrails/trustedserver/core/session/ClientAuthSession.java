@@ -209,13 +209,15 @@ public final class ClientAuthSession {
             return protocolError("expected PasswordRequest, got " + message.type());
         }
         return environment.promptPassword(request).thenApply(entered -> {
-            String secret = entered.orElse("");
             if (entered.isEmpty() && request.kind() != PasswordRequest.Kind.SET) {
                 return failNow(ClientFailure.Kind.USER_CANCELLED, "password entry cancelled");
             }
             try {
-                PasswordAnswer answer = request.kind() == PasswordRequest.Kind.RESET && secret.isEmpty()
-                        ? PasswordAnswer.clear() : new PasswordAnswer(secret);
+                PasswordAnswer answer = entered.orElseGet(() -> new PasswordAnswer(""));
+                if (!validAction(request.kind(), answer)) {
+                    return failNow(ClientFailure.Kind.INTERNAL_ERROR,
+                            "invalid password action " + answer.action() + " for " + request.kind());
+                }
                 return new ClientStep.Reply(password.seal(answer));
             } catch (IllegalArgumentException e) {
                 return failNow(ClientFailure.Kind.INTERNAL_ERROR, "password rejected locally: " + e.getMessage());
@@ -223,6 +225,19 @@ public final class ClientAuthSession {
                 return failNow(ClientFailure.Kind.CRYPTO_FAILURE, e.getMessage());
             }
         });
+    }
+
+    private static boolean validAction(PasswordRequest.Kind kind, PasswordAnswer answer) {
+        return switch (kind) {
+            case LOGIN -> answer.action() == PasswordAnswer.Action.SUBMIT
+                    || (answer.action() == PasswordAnswer.Action.REQUEST_RESET && answer.password().isEmpty());
+            case RECOVERY -> answer.action() == PasswordAnswer.Action.SUBMIT
+                    || (answer.action() == PasswordAnswer.Action.REQUEST_RESET && !answer.password().isEmpty());
+            case SET -> answer.action() == PasswordAnswer.Action.SUBMIT
+                    || answer.action() == PasswordAnswer.Action.SKIP;
+            case RESET -> answer.action() == PasswordAnswer.Action.SUBMIT
+                    || answer.action() == PasswordAnswer.Action.CLEAR;
+        };
     }
 
     private CompletableFuture<ClientStep> onFinish(byte[] payload)

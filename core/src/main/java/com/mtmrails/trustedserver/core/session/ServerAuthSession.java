@@ -23,6 +23,7 @@ import com.mtmrails.trustedserver.core.message.PasswordRequest;
 import com.mtmrails.trustedserver.core.message.ServerHello;
 import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -72,6 +73,19 @@ public final class ServerAuthSession {
     private final Ed25519.KeyPairData identity;
     private final AccountGateway accounts;
     private final SecureRandom random;
+    private final Clock clock;
+
+    private record ResetGrant(RecoveryOrigin origin, byte[] expectedOldPub, byte[] newPub,
+            byte[] transcript, long expiresAt) {
+        private ResetGrant {
+            expectedOldPub = expectedOldPub.clone();
+            newPub = newPub.clone();
+            transcript = transcript.clone();
+        }
+        @Override public byte[] expectedOldPub() { return expectedOldPub.clone(); }
+        @Override public byte[] newPub() { return newPub.clone(); }
+        @Override public byte[] transcript() { return transcript.clone(); }
+    }
 
     private State state = State.NEW;
     private Channel expectedChannel;
@@ -97,6 +111,8 @@ public final class ServerAuthSession {
     private PasswordRequest.Kind pendingKind;
     private int attemptsLeft;
     private int setRejections;
+    private ResetGrant resetGrant;
+    private boolean recoveryForPasswordReset;
 
     /**
      * @param accountId 账号 ID：正版为 UUID，离线为小写用户名
@@ -107,6 +123,12 @@ public final class ServerAuthSession {
      */
     public ServerAuthSession(String accountId, String username, boolean onlineMode, boolean mojangVerified,
             ServerAuthConfig config, Ed25519.KeyPairData identity, AccountGateway accounts, SecureRandom random) {
+        this(accountId, username, onlineMode, mojangVerified, config, identity, accounts, random, Clock.systemUTC());
+    }
+
+    ServerAuthSession(String accountId, String username, boolean onlineMode, boolean mojangVerified,
+            ServerAuthConfig config, Ed25519.KeyPairData identity, AccountGateway accounts, SecureRandom random,
+            Clock clock) {
         this.accountId = Objects.requireNonNull(accountId, "accountId");
         this.username = Objects.requireNonNull(username, "username");
         this.onlineMode = onlineMode;
@@ -118,6 +140,7 @@ public final class ServerAuthSession {
         this.identity = Objects.requireNonNull(identity, "identity");
         this.accounts = Objects.requireNonNull(accounts, "accounts");
         this.random = Objects.requireNonNull(random, "random");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     /** 生成 ServerHello。只能调用一次。 */
@@ -302,8 +325,10 @@ public final class ServerAuthSession {
         state = State.AWAIT_PASSWORD;
         expectedChannel = Channel.PASSWORD;
         try {
+            int timeout = pendingKind == PasswordRequest.Kind.RESET
+                    ? Math.min(60, config.passwordTimeoutSec()) : config.passwordTimeoutSec();
             return new ServerStep.Send(new Outbound(Channel.PASSWORD,
-                    password.seal(new PasswordRequest(pendingKind, attemptsLeft, config.passwordTimeoutSec()))));
+                    password.seal(new PasswordRequest(pendingKind, attemptsLeft, timeout))));
         } catch (CryptoException e) {
             return reject(RejectReason.CRYPTO_FAILURE);
         }
@@ -335,21 +360,93 @@ public final class ServerAuthSession {
                     return setRejections >= config.maxPasswordAttempts() ? finish() : sendPasswordRequest();
                 });
             case LOGIN:
+                if (answer.action() == PasswordAnswer.Action.REQUEST_RESET) {
+                    if (!answer.password().isEmpty()) {
+                        return done(RejectReason.PROTOCOL_ERROR);
+                    }
+                    if (mojangVerified && Arrays.equals(account.playerPub(), playerPub)) {
+                        return CompletableFuture.completedFuture(beginReset(RecoveryOrigin.ONLINE_SESSION_AND_KEY));
+                    }
+                    if (config.validation().recoveryPassword() && account.hasRecoveryPassword()) {
+                        recoveryForPasswordReset = true;
+                        return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.RECOVERY));
+                    }
+                    return done(RejectReason.KEY_MISMATCH);
+                }
                 if (answer.action() != PasswordAnswer.Action.SUBMIT) {
                     return done(RejectReason.PROTOCOL_ERROR);
                 }
                 return accounts.verifyLoginPassword(accountId, secret)
                         .thenCompose(ok -> ok ? loginSucceeded() : passwordFailed());
             case RECOVERY:
-                if (answer.action() != PasswordAnswer.Action.SUBMIT) {
+                if (answer.action() != PasswordAnswer.Action.SUBMIT
+                        && answer.action() != PasswordAnswer.Action.REQUEST_RESET) {
                     return done(RejectReason.PROTOCOL_ERROR);
                 }
                 return accounts.verifyRecoveryPassword(accountId, secret)
-                        .thenCompose(ok -> ok ? identityVerified(RebindReason.RECOVERY) : passwordFailed());
+                        .thenCompose(ok -> {
+                            if (!ok) return passwordFailed();
+                            return answer.action() == PasswordAnswer.Action.REQUEST_RESET || recoveryForPasswordReset
+                                    ? CompletableFuture.completedFuture(beginReset(RecoveryOrigin.RECOVERY_PASSWORD))
+                                    : identityVerified(RebindReason.RECOVERY);
+                        });
             case RESET:
-                return done(RejectReason.PROTOCOL_ERROR); // 下一阶段接入 ResetGrant 与存储事务
+                if (answer.action() != PasswordAnswer.Action.SUBMIT
+                        && answer.action() != PasswordAnswer.Action.CLEAR) {
+                    return done(RejectReason.PROTOCOL_ERROR);
+                }
+                return applyReset(answer);
         }
         throw new IllegalStateException("unreachable password kind: " + pendingKind);
+    }
+
+    private ServerStep beginReset(RecoveryOrigin origin) {
+        if (!account.keyBound()) {
+            return reject(RejectReason.ACCOUNT_CONFLICT);
+        }
+        resetGrant = new ResetGrant(origin, account.playerPub(), playerPub, transcript,
+                clock.millis() + 60_000L);
+        recoveryForPasswordReset = false;
+        setRejections = 0;
+        pendingKind = PasswordRequest.Kind.RESET;
+        attemptsLeft = 0;
+        return sendPasswordRequest();
+    }
+
+    private CompletableFuture<ServerStep> applyReset(PasswordAnswer answer) {
+        ResetGrant grant = resetGrant;
+        if (grant == null || clock.millis() > grant.expiresAt()
+                || !Arrays.equals(grant.newPub(), playerPub)
+                || !Arrays.equals(grant.transcript(), transcript)) {
+            resetGrant = null;
+            return done(RejectReason.TIMEOUT);
+        }
+        PasswordChange change = answer.action() == PasswordAnswer.Action.CLEAR
+                ? PasswordChange.CLEAR : PasswordChange.SET;
+        return accounts.recoverAccount(accountId, grant.expectedOldPub(), grant.newPub(), change,
+                answer.password(), grant.origin()).thenApply(result -> {
+                    if (result == RecoveryResult.ACCOUNT_CONFLICT) {
+                        resetGrant = null;
+                        return reject(RejectReason.ACCOUNT_CONFLICT);
+                    }
+                    if (result == RecoveryResult.PASSWORD_REJECTED) {
+                        setRejections++;
+                        if (setRejections >= config.maxPasswordAttempts()) {
+                            resetGrant = null;
+                            return reject(RejectReason.PASSWORD_ATTEMPTS_EXHAUSTED);
+                        }
+                        return sendPasswordRequest();
+                    }
+                    resetGrant = null;
+                    account = account.withPlayerPub(playerPub);
+                    account = change == PasswordChange.SET
+                            ? account.withLoginPassword() : account.withoutLoginPassword();
+                    if (grant.origin() == RecoveryOrigin.RECOVERY_PASSWORD
+                            && !Arrays.equals(grant.expectedOldPub(), grant.newPub())) {
+                        rebound = RebindReason.RECOVERY;
+                    }
+                    return finish();
+                });
     }
 
     /**
@@ -418,6 +515,7 @@ public final class ServerAuthSession {
                 account.hasLoginPassword(), account.hasRecoveryPassword(), config.noticesFor(account, rebound != null),
                 Optional.ofNullable(rebound), handover);
         state = State.DONE;
+        resetGrant = null;
         auth.close();
         keys.destroy();
         return CompletableFuture.completedFuture(new ServerStep.Done(outcome));
@@ -444,6 +542,7 @@ public final class ServerAuthSession {
             if (keys != null) {
                 keys.destroy();
             }
+            resetGrant = null;
         }
         return new ServerStep.Done(outcome);
     }

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,10 +22,14 @@ import com.mtmrails.trustedserver.core.message.ClientProof;
 import com.mtmrails.trustedserver.core.message.Message;
 import com.mtmrails.trustedserver.core.message.MessageCodec;
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
+import com.mtmrails.trustedserver.core.message.PasswordAnswer;
 import com.mtmrails.trustedserver.core.message.PasswordResult;
 import com.mtmrails.trustedserver.core.message.ServerHello;
 import com.mtmrails.trustedserver.core.message.SetPassword;
 import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -32,6 +37,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -246,6 +252,81 @@ class AuthSessionTest {
     }
 
     @Test
+    void offlineNewDeviceCanUseRecoveryPasswordToResetLoginPassword() {
+        byte[] original = otherKey();
+        accounts.put("steve", original, false, "old-password", "recovery-secret");
+        env.respond(new PasswordAnswer(PasswordAnswer.Action.REQUEST_RESET, "recovery-secret"));
+        env.answer("new-password");
+
+        Handshake h = handshake().run();
+        assertEquals(List.of(PasswordRequest.Kind.RECOVERY, PasswordRequest.Kind.RESET), kinds(env));
+        assertArrayEquals(h.clientPublicKey(), accounts.accounts.get("steve").playerPub);
+        assertEquals("new-password", accounts.accounts.get("steve").loginPassword);
+        assertEquals(java.util.Optional.of(RebindReason.RECOVERY), h.accepted().reboundBy());
+    }
+
+    @Test
+    void offlineRecoveryCanClearLoginPassword() {
+        accounts.put("steve", otherKey(), false, "old-password", "recovery-secret");
+        env.respond(new PasswordAnswer(PasswordAnswer.Action.REQUEST_RESET, "recovery-secret"),
+                PasswordAnswer.clear());
+
+        Handshake h = handshake().run();
+        assertEquals(List.of(PasswordRequest.Kind.RECOVERY, PasswordRequest.Kind.RESET), kinds(env));
+        assertNull(accounts.accounts.get("steve").loginPassword);
+        assertTrue(accounts.accounts.get("steve").restricted);
+        assertTrue(h.accepted().restricted());
+    }
+
+    @Test
+    void offlineMatchingDeviceNeedsRecoveryPasswordBeforeReset() {
+        accounts.put("steve", clientKey(), false, "old-password", "recovery-secret");
+        env.respond(PasswordAnswer.requestReset());
+        env.answer("recovery-secret", "new-password");
+
+        Handshake h = handshake().run();
+        assertEquals(List.of(PasswordRequest.Kind.LOGIN, PasswordRequest.Kind.RECOVERY,
+                PasswordRequest.Kind.RESET), kinds(env));
+        assertEquals("new-password", accounts.accounts.get("steve").loginPassword);
+        assertTrue(h.accepted().reboundBy().isEmpty());
+    }
+
+    @Test
+    void recoveryResetConflictKeepsOriginalAccount() {
+        byte[] original = otherKey();
+        accounts.put("steve", original, false, "old-password", "recovery-secret");
+        accounts.loseRecoveryRace = true;
+        env.respond(new PasswordAnswer(PasswordAnswer.Action.REQUEST_RESET, "recovery-secret"));
+        env.answer("new-password");
+
+        Handshake h = handshake().run();
+        assertEquals(RejectReason.ACCOUNT_CONFLICT, h.rejected().reason());
+        assertArrayEquals(original, accounts.accounts.get("steve").playerPub);
+        assertEquals("old-password", accounts.accounts.get("steve").loginPassword);
+    }
+
+    @Test
+    void resetGrantExpiresAfterSixtySeconds() {
+        accounts.put("steve", otherKey(), false, "old-password", "recovery-secret");
+        env.respond(new PasswordAnswer(PasswordAnswer.Action.REQUEST_RESET, "recovery-secret"));
+        env.answer("new-password");
+        AtomicLong now = new AtomicLong(1_000);
+        Handshake h = handshake();
+        h.clock = new Clock() {
+            @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
+            @Override public Clock withZone(ZoneId zone) { return this; }
+            @Override public Instant instant() { return Instant.ofEpochMilli(now.get()); }
+            @Override public long millis() { return now.get(); }
+        };
+        env.onPrompt = request -> {
+            if (request.kind() == PasswordRequest.Kind.RESET) now.addAndGet(60_001);
+        };
+
+        assertEquals(RejectReason.TIMEOUT, h.run().rejected().reason());
+        assertEquals("old-password", accounts.accounts.get("steve").loginPassword);
+    }
+
+    @Test
     void wrongRecoveryPasswordExhausts() {
         byte[] original = otherKey();
         accounts.put("steve", original, false, null, "rec");
@@ -367,6 +448,31 @@ class AuthSessionTest {
         assertTrue(h.accepted().reboundBy().isEmpty());
         assertTrue(accounts.rebinds.isEmpty());
         assertEquals(List.of(), h.clientResult().notices());
+    }
+
+    @Test
+    void onlineSessionAndOriginalKeyCanResetPassword() {
+        accounts.put(UUID, clientKey(), false, "old-password", "recovery-secret");
+        env.respond(PasswordAnswer.requestReset());
+        env.answer("new-password");
+
+        Handshake h = onlineHandshake().run();
+        assertEquals(List.of(PasswordRequest.Kind.LOGIN, PasswordRequest.Kind.RESET), kinds(env));
+        assertEquals("new-password", accounts.accounts.get(UUID).loginPassword);
+        assertTrue(h.accepted().reboundBy().isEmpty());
+        assertTrue(accounts.rebinds.isEmpty());
+    }
+
+    @Test
+    void onlineSessionWithNewDeviceCannotUseFastPasswordReset() {
+        byte[] original = otherKey();
+        accounts.put(UUID, original, false, "old-password", null);
+        env.respond(PasswordAnswer.requestReset());
+
+        Handshake h = onlineHandshake().run();
+        assertEquals(RejectReason.KEY_MISMATCH, h.rejected().reason());
+        assertArrayEquals(original, accounts.accounts.get(UUID).playerPub);
+        assertEquals("old-password", accounts.accounts.get(UUID).loginPassword);
     }
 
     @Test

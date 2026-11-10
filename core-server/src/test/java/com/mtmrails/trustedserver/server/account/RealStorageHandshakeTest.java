@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
+import com.mtmrails.trustedserver.core.message.PasswordAnswer;
 import com.mtmrails.trustedserver.core.session.AuthOutcome;
 import com.mtmrails.trustedserver.core.session.ClientAuthSession;
 import com.mtmrails.trustedserver.core.session.ClientEnvironment;
@@ -77,10 +78,11 @@ class RealStorageHandshakeTest {
         }
 
         @Override
-        public CompletableFuture<Optional<String>> promptPassword(PasswordRequest request) {
+        public CompletableFuture<Optional<PasswordAnswer>> promptPassword(PasswordRequest request) {
             prompts.add(request.kind());
             String next = answers.poll();
-            return CompletableFuture.completedFuture(next == null || next.isEmpty() ? Optional.empty() : Optional.of(next));
+            return CompletableFuture.completedFuture(next == null
+                    ? Optional.empty() : Optional.of(new PasswordAnswer(next)));
         }
     }
 

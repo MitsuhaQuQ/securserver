@@ -10,6 +10,9 @@ import com.mtmrails.trustedserver.core.message.PasswordRequest;
 import com.mtmrails.trustedserver.core.message.PasswordResult;
 import com.mtmrails.trustedserver.core.session.AccountView;
 import com.mtmrails.trustedserver.core.session.RebindReason;
+import com.mtmrails.trustedserver.core.session.PasswordChange;
+import com.mtmrails.trustedserver.core.session.RecoveryOrigin;
+import com.mtmrails.trustedserver.core.session.RecoveryResult;
 import com.mtmrails.trustedserver.server.password.PasswordHasher;
 import com.mtmrails.trustedserver.server.password.PasswordPolicy;
 import com.mtmrails.trustedserver.server.store.Account;
@@ -173,6 +176,43 @@ class AccountServiceTest {
         service.rebind("steve", key(3), RebindReason.ONLINE_MODE_IDENTITY).join();
         assertArrayEquals(key(3), account("steve").playerPub());
         assertEquals(List.of("bind", "recover", "online_rebind"), events("steve"));
+    }
+
+    @Test
+    void atomicRecoveryHashesNewPasswordAndComparesOldKey() {
+        service.bindNew("steve", "Steve", key(1)).join();
+        service.setLoginPasswordInGame("steve", "old password").join();
+        service.setRecoveryPasswordInGame("steve", "recovery password").join();
+
+        assertEquals(RecoveryResult.PASSWORD_REJECTED,
+                service.recoverAccount("steve", key(1), key(2), PasswordChange.SET,
+                        "recovery password", RecoveryOrigin.RECOVERY_PASSWORD).join());
+        assertEquals(RecoveryResult.ACCOUNT_CONFLICT,
+                service.recoverAccount("steve", key(9), key(2), PasswordChange.SET,
+                        "new password", RecoveryOrigin.RECOVERY_PASSWORD).join());
+        assertArrayEquals(key(1), account("steve").playerPub());
+        assertTrue(service.verifyLoginPassword("steve", "old password").join());
+
+        assertEquals(RecoveryResult.OK,
+                service.recoverAccount("steve", key(1), key(2), PasswordChange.SET,
+                        "new password", RecoveryOrigin.RECOVERY_PASSWORD).join());
+        assertArrayEquals(key(2), account("steve").playerPub());
+        assertTrue(service.verifyLoginPassword("steve", "new password").join());
+        assertFalse(service.verifyLoginPassword("steve", "old password").join());
+        assertEquals(List.of("bind", "set_password", "set_recovery", "recovery_password_reset"),
+                events("steve"));
+    }
+
+    @Test
+    void onlineRecoveryCanClearPasswordWithoutChangingKey() {
+        service.bindNew("steve", "Steve", key(1)).join();
+        service.setLoginPasswordInGame("steve", "old password").join();
+        assertEquals(RecoveryResult.OK,
+                service.recoverAccount("steve", key(1), key(1), PasswordChange.CLEAR, "",
+                        RecoveryOrigin.ONLINE_SESSION_AND_KEY).join());
+        assertNull(account("steve").passwordHash());
+        assertTrue(account("steve").restricted());
+        assertEquals(List.of("bind", "set_password", "online_password_reset"), events("steve"));
     }
 
     @Test

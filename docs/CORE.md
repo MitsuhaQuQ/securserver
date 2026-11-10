@@ -207,7 +207,7 @@ public final class SecureMessageChannel {
 - `Accepted.reboundBy` 记录本次改绑原因，Finish 下发 `rebindNotice` 提示。恢复审计区分 `online_password_reset`、`recovery_rebind` 与 `recovery_password_reset`
 - 账号存在但绑定已被管理员清空时（`AccountView.keyBound()` 为假），按 `RebindReason.KEY_RESET` 处理：已设登录密码则先验证，再用 `claimUnboundKey` 原子绑定，被抢先时按 `ACCOUNT_CONFLICT` 拒绝
 - `setLoginPassword` 返回是否符合密码规则；不符合时重新发 SET，连续不符合达到 `maxPasswordAttempts` 次按跳过处理
-- v3 的 `PasswordAnswer.Action` 与 `PasswordRequest.Kind.RESET` 已完成严格编解码；当前状态机尚不签发 `ResetGrant`，意外收到 RESET 状态或未授权重设动作按 `PROTOCOL_ERROR` 拒绝
+- v3 的 `PasswordAnswer.Action`、`PasswordRequest.Kind.RESET` 与内存态 `ResetGrant` 已接入服务端和客户端状态机。未授权 RESET、动作与请求种类不匹配、transcript / 新公钥不匹配均拒绝；授权超过 60 秒按超时拒绝
 - 账号存储线程池排满（`RejectedExecutionException`，无论同步抛出还是 future 失败）按 `SERVER_BUSY` 拒绝
 - 每种密码（登录 / 找回）在一个连接上各有 `maxPasswordAttempts` 次机会；找回成功后转入登录密码时次数重新计算。跨连接的锁定由 `AccountGateway.passwordFailed(…, exhausted)` 的实现负责
 - 可信握手完成前，拒绝原因只在内部和审计日志中使用；服务端对外统一使用配置的拒绝文本（模仿原版封禁或自定义）。服务端成功解密 ClientProof 并验证其对当前 transcript 的签名后，才允许提供具体原因；这只是模型 A 的协议验证边界，不代表公钥绑定、密码认证已经通过，更不能提前放行。具体错误的受保护传输格式另行定义。

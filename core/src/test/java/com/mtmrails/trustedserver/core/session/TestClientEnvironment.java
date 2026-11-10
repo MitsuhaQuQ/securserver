@@ -2,6 +2,7 @@ package com.mtmrails.trustedserver.core.session;
 
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
+import com.mtmrails.trustedserver.core.message.PasswordAnswer;
 import java.security.SecureRandom;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -12,20 +13,29 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /** 测试用客户端环境：内存 TOFU 与玩家密钥，密码弹框按脚本作答。 */
 final class TestClientEnvironment implements ClientEnvironment {
     final Map<String, byte[]> pinned = new HashMap<>();
     final Map<String, Ed25519.KeyPairData> playerKeys = new HashMap<>();
     /** 依次作答；{@code null} 表示取消 / 跳过。 */
-    final Deque<Optional<String>> answers = new ArrayDeque<>();
+    final Deque<Optional<PasswordAnswer>> answers = new ArrayDeque<>();
     final List<PasswordRequest> prompts = new ArrayList<>();
     boolean acceptKeyChange;
     int keyChangePrompts;
+    Consumer<PasswordRequest> onPrompt = request -> { };
 
     TestClientEnvironment answer(String... passwords) {
         for (String password : passwords) {
-            answers.add(Optional.ofNullable(password));
+            answers.add(password == null ? Optional.empty() : Optional.of(new PasswordAnswer(password)));
+        }
+        return this;
+    }
+
+    TestClientEnvironment respond(PasswordAnswer... responses) {
+        for (PasswordAnswer response : responses) {
+            answers.add(Optional.of(response));
         }
         return this;
     }
@@ -59,8 +69,9 @@ final class TestClientEnvironment implements ClientEnvironment {
     }
 
     @Override
-    public CompletableFuture<Optional<String>> promptPassword(PasswordRequest request) {
+    public CompletableFuture<Optional<PasswordAnswer>> promptPassword(PasswordRequest request) {
         prompts.add(request);
+        onPrompt.accept(request);
         if (answers.isEmpty()) {
             throw new AssertionError("unexpected password prompt: " + request);
         }

@@ -1,6 +1,7 @@
 package com.mtmrails.trustedserver.fabric.client;
 
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
+import com.mtmrails.trustedserver.core.message.PasswordAnswer;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.Util;
@@ -16,7 +17,7 @@ import net.minecraft.util.FormattedCharSequence;
 final class PasswordPromptScreen extends Screen {
     private final Screen parent;
     private final PasswordRequest request;
-    private final CompletableFuture<Optional<String>> result;
+    private final CompletableFuture<Optional<PasswordAnswer>> result;
     private final long deadlineMillis;
     private EditBox password;
     private EditBox confirm;
@@ -24,7 +25,7 @@ final class PasswordPromptScreen extends Screen {
     private boolean completed;
 
     PasswordPromptScreen(Screen parent, PasswordRequest request,
-            CompletableFuture<Optional<String>> result) {
+            CompletableFuture<Optional<PasswordAnswer>> result) {
         super(Component.literal(titleFor(request.kind())));
         this.parent = parent;
         this.request = request;
@@ -52,11 +53,16 @@ final class PasswordPromptScreen extends Screen {
                 .bounds(center - 150, buttonY, 95, 20).build());
         if (hasConfirmation()) {
             String alternate = request.kind() == PasswordRequest.Kind.SET ? "跳过" : "清除密码";
-            addRenderableWidget(Button.builder(Component.literal(alternate), b -> finish(Optional.of(""), true))
+            addRenderableWidget(Button.builder(Component.literal(alternate), b -> alternateAction())
+                    .bounds(center - 48, buttonY, 95, 20).build());
+        } else if (request.kind() == PasswordRequest.Kind.LOGIN
+                || request.kind() == PasswordRequest.Kind.RECOVERY) {
+            String alternate = request.kind() == PasswordRequest.Kind.LOGIN ? "忘记密码" : "验证并重设";
+            addRenderableWidget(Button.builder(Component.literal(alternate), b -> requestReset())
                     .bounds(center - 48, buttonY, 95, 20).build());
         }
         addRenderableWidget(Button.builder(Component.literal("取消"), b -> onClose())
-                .bounds(hasConfirmation() ? center + 54 : center + 5,
+                .bounds(center + 54,
                         buttonY, 95, 20).build());
         setInitialFocus(password);
     }
@@ -76,10 +82,25 @@ final class PasswordPromptScreen extends Screen {
             error = Component.literal("两次输入的密码不一致");
             return;
         }
-        finish(Optional.of(secret), true);
+        finish(Optional.of(new PasswordAnswer(secret)), true);
     }
 
-    private void finish(Optional<String> value, boolean restoreParent) {
+    private void alternateAction() {
+        PasswordAnswer answer = request.kind() == PasswordRequest.Kind.SET
+                ? new PasswordAnswer("") : PasswordAnswer.clear();
+        finish(Optional.of(answer), true);
+    }
+
+    private void requestReset() {
+        String secret = request.kind() == PasswordRequest.Kind.RECOVERY ? password.getValue() : "";
+        if (request.kind() == PasswordRequest.Kind.RECOVERY && secret.isEmpty()) {
+            error = Component.literal("找回密码不能为空");
+            return;
+        }
+        finish(Optional.of(new PasswordAnswer(PasswordAnswer.Action.REQUEST_RESET, secret)), true);
+    }
+
+    private void finish(Optional<PasswordAnswer> value, boolean restoreParent) {
         if (completed) return;
         completed = true;
         result.complete(value);
@@ -147,7 +168,7 @@ final class PasswordPromptScreen extends Screen {
     private static String descriptionFor(PasswordRequest.Kind kind) {
         return switch (kind) {
             case LOGIN -> "输入此服务器账号的登录密码";
-            case RECOVERY -> "设备密钥不匹配；输入找回密码以重新绑定这台设备";
+            case RECOVERY -> "输入找回密码以继续恢复账号或重设登录密码";
             case SET -> "新账号可现在设置密码，也可以跳过";
             case RESET -> "设置新密码，或明确选择清除登录密码";
         };
@@ -156,7 +177,7 @@ final class PasswordPromptScreen extends Screen {
     private static String submitLabel(PasswordRequest.Kind kind) {
         return switch (kind) {
             case LOGIN -> "登录";
-            case RECOVERY -> "找回并改绑";
+            case RECOVERY -> "验证并继续";
             case SET -> "设置密码";
             case RESET -> "重设密码";
         };

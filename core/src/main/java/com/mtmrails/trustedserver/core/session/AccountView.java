@@ -27,4 +27,9 @@ public record AccountView(byte[] playerPub, boolean restricted, boolean hasLogin
     AccountView withLoginPassword() {
         return new AccountView(playerPub, false, true, hasRecoveryPassword);
     }
+
+    /** 清除登录密码后：无密码，并恢复受限标记。 */
+    AccountView withoutLoginPassword() {
+        return new AccountView(playerPub, true, false, hasRecoveryPassword);
+    }
 }

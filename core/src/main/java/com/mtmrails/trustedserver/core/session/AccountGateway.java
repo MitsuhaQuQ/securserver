@@ -44,6 +44,14 @@ public interface AccountGateway {
     CompletableFuture<Boolean> claimUnboundKey(String accountId, byte[] playerPub);
 
     /**
+     * 使用一次性恢复授权原子地更新设备绑定和登录密码。
+     * {@code expectedOldPub} 必须仍是数据库中的绑定，否则返回冲突。
+     * CLEAR 时 {@code newPassword} 必须为空；SET 时由实现执行密码规则、与找回密码不同及 Argon2id 哈希。
+     */
+    CompletableFuture<RecoveryResult> recoverAccount(String accountId, byte[] expectedOldPub, byte[] newPub,
+            PasswordChange change, String newPassword, RecoveryOrigin origin);
+
+    /**
      * 记录一次密码错误。{@code exhausted} 为真表示本连接的尝试次数已用尽，实现应据此锁定。
      */
     CompletableFuture<Void> passwordFailed(String accountId, PasswordRequest.Kind kind, boolean exhausted);

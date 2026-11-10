@@ -39,7 +39,7 @@ public record PasswordAnswer(Action action, String password) implements Password
         if (action == Action.SUBMIT && password.isEmpty()) {
             throw new IllegalArgumentException("SUBMIT requires a password");
         }
-        if (action != Action.SUBMIT && !password.isEmpty()) {
+        if (action != Action.SUBMIT && action != Action.REQUEST_RESET && !password.isEmpty()) {
             throw new IllegalArgumentException(action + " must not carry a password");
         }
     }

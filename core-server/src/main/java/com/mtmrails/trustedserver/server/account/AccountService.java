@@ -5,6 +5,9 @@ import com.mtmrails.trustedserver.core.message.PasswordResult;
 import com.mtmrails.trustedserver.core.session.AccountGateway;
 import com.mtmrails.trustedserver.core.session.AccountView;
 import com.mtmrails.trustedserver.core.session.RebindReason;
+import com.mtmrails.trustedserver.core.session.PasswordChange;
+import com.mtmrails.trustedserver.core.session.RecoveryOrigin;
+import com.mtmrails.trustedserver.core.session.RecoveryResult;
 import com.mtmrails.trustedserver.server.password.PasswordHasher;
 import com.mtmrails.trustedserver.server.store.Account;
 import com.mtmrails.trustedserver.server.store.AuditEvent;
@@ -151,6 +154,49 @@ public final class AccountService implements AccountGateway, AutoCloseable {
                 store.audit(now(), accountId, AuditEvent.BIND_AFTER_RESET, null, null);
             }
             return claimed;
+        });
+    }
+
+    @Override
+    public CompletableFuture<RecoveryResult> recoverAccount(String accountId, byte[] expectedOldPub, byte[] newPub,
+            PasswordChange change, String newPassword, RecoveryOrigin origin) {
+        if (origin == RecoveryOrigin.ONLINE_SESSION_AND_KEY
+                && !java.util.Arrays.equals(expectedOldPub, newPub)) {
+            return CompletableFuture.completedFuture(RecoveryResult.ACCOUNT_CONFLICT);
+        }
+        if (change == PasswordChange.CLEAR) {
+            if (!newPassword.isEmpty()) {
+                return CompletableFuture.completedFuture(RecoveryResult.PASSWORD_REJECTED);
+            }
+            return commitRecovery(accountId, expectedOldPub, newPub, change, null, origin);
+        }
+        Optional<String> lengthProblem = config.policy().checkLength(newPassword);
+        if (lengthProblem.isPresent()) {
+            return CompletableFuture.completedFuture(RecoveryResult.PASSWORD_REJECTED);
+        }
+        return db(() -> store.find(accountId).map(Account::recoveryHash)).thenCompose(recoveryHash -> {
+            CompletableFuture<Boolean> sameAsRecovery = recoveryHash.isEmpty()
+                    ? CompletableFuture.completedFuture(false)
+                    : hash(() -> hasher.verify(newPassword, recoveryHash.get()));
+            return sameAsRecovery.thenCompose(same -> {
+                if (same) {
+                    return CompletableFuture.completedFuture(RecoveryResult.PASSWORD_REJECTED);
+                }
+                return hash(() -> hasher.hash(newPassword)).thenCompose(newHash ->
+                        commitRecovery(accountId, expectedOldPub, newPub, change, newHash, origin));
+            });
+        });
+    }
+
+    private CompletableFuture<RecoveryResult> commitRecovery(String accountId, byte[] expectedOldPub, byte[] newPub,
+            PasswordChange change, String newHash, RecoveryOrigin origin) {
+        return db(() -> {
+            AuditEvent event = origin == RecoveryOrigin.ONLINE_SESSION_AND_KEY
+                    ? AuditEvent.ONLINE_PASSWORD_RESET : AuditEvent.RECOVERY_PASSWORD_RESET;
+            SqliteStore.PasswordMutation mutation = change == PasswordChange.SET
+                    ? SqliteStore.PasswordMutation.SET : SqliteStore.PasswordMutation.CLEAR;
+            return store.recoverAccount(accountId, expectedOldPub, newPub, mutation, newHash, now(), event)
+                    ? RecoveryResult.OK : RecoveryResult.ACCOUNT_CONFLICT;
         });
     }
 

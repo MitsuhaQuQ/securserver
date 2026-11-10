@@ -2,6 +2,7 @@ package com.mtmrails.trustedserver.core.session;
 
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
+import com.mtmrails.trustedserver.core.message.PasswordAnswer;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -22,8 +23,8 @@ public interface ClientEnvironment {
     CompletableFuture<Ed25519.KeyPairData> playerKey(byte[] serverIdPub, String username);
 
     /**
-     * 弹出密码输入框。返回空表示玩家取消；对 SET 而言空串或空结果都表示“跳过”。
-     * SET 的两次输入一致性由界面在本地校验，这里只返回最终密码。
+     * 弹出密码输入框。Optional.empty 表示取消；SET 的取消由状态机兼容为 SKIP。
+     * 两次输入一致性与 REQUEST_RESET / CLEAR 等显式动作由界面在本地确定。
      */
-    CompletableFuture<Optional<String>> promptPassword(PasswordRequest request);
+    CompletableFuture<Optional<PasswordAnswer>> promptPassword(PasswordRequest request);
 }

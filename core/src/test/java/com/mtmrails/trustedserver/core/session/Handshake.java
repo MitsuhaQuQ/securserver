@@ -3,6 +3,7 @@ package com.mtmrails.trustedserver.core.session;
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
 import com.mtmrails.trustedserver.core.message.Channel;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
@@ -23,6 +24,7 @@ final class Handshake {
     boolean onlineMode;
     boolean mojangVerified;
     boolean wantTunnel;
+    Clock clock = Clock.systemUTC();
     BiFunction<Channel, byte[], byte[]> toClient = (c, p) -> p;
     BiFunction<Channel, byte[], byte[]> toServer = (c, p) -> p;
 
@@ -41,7 +43,7 @@ final class Handshake {
     Handshake run() {
         SecureRandom random = new SecureRandom();
         server = new ServerAuthSession(accountId, serverUsername, onlineMode, mojangVerified, config, serverIdentity,
-                accounts, random);
+                accounts, random, clock);
         clientSession = new ClientAuthSession(ADDRESS, clientUsername, wantTunnel, client, random);
         Outbound query = server.start();
         for (int round = 0; round < 32; round++) {

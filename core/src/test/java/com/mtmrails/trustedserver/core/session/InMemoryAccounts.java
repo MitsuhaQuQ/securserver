@@ -39,6 +39,7 @@ final class InMemoryAccounts implements AccountGateway {
     boolean failNextCall;
     /** 模拟并发连接抢先绑定：bindNew 一律返回 false。 */
     boolean loseBindRace;
+    boolean loseRecoveryRace;
     /** 模拟服务端密码规则：短于该长度的登录密码被拒绝。 */
     int minPasswordLength;
 
@@ -123,6 +124,39 @@ final class InMemoryAccounts implements AccountGateway {
                 rebindReasons.add(reason);
             }
             return null;
+        });
+    }
+
+    @Override
+    public CompletableFuture<RecoveryResult> recoverAccount(String accountId, byte[] expectedOldPub, byte[] newPub,
+            PasswordChange change, String newPassword, RecoveryOrigin origin) {
+        return async(() -> {
+            Account account = accounts.get(accountId);
+            synchronized (account) {
+                if (loseRecoveryRace || !java.util.Arrays.equals(account.playerPub, expectedOldPub)) {
+                    return RecoveryResult.ACCOUNT_CONFLICT;
+                }
+                if (change == PasswordChange.SET
+                        && (newPassword.length() < minPasswordLength
+                                || newPassword.equals(account.recoveryPassword))) {
+                    return RecoveryResult.PASSWORD_REJECTED;
+                }
+                account.playerPub = newPub.clone();
+                if (change == PasswordChange.SET) {
+                    account.loginPassword = newPassword;
+                    account.restricted = false;
+                } else {
+                    account.loginPassword = null;
+                    account.restricted = true;
+                }
+                synchronized (rebinds) {
+                    if (!java.util.Arrays.equals(expectedOldPub, newPub)) {
+                        rebinds.add(accountId);
+                        rebindReasons.add(RebindReason.RECOVERY);
+                    }
+                }
+                return RecoveryResult.OK;
+            }
         });
     }
 

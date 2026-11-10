@@ -220,7 +220,7 @@ final class ClientLoginHandler {
             case SERVER_SIGNATURE_INVALID -> "服务器身份验证失败（签名无效），连接可能被中间人篡改。";
             case SERVER_KEY_REJECTED -> "服务器身份公钥与上次记录的不一致，连接可能被中间人篡改，已拒绝连接。\n"
                     + "如果服主确认更换了服务器密钥，请删除 config/trustedserver/known_servers.txt 中该服务器的那一行后重试。";
-            case USER_CANCELLED -> "此服务器要求输入密码，当前版本的 TrustedServer 尚不支持密码输入。";
+            case USER_CANCELLED -> "已取消 TrustedServer 密码或恢复操作，连接已中止。";
             case CRYPTO_FAILURE, PROTOCOL_ERROR -> "TrustedServer 认证失败（" + failure.kind() + "）。";
             case INTERNAL_ERROR -> "TrustedServer 本地错误：" + failure.detail();
         };

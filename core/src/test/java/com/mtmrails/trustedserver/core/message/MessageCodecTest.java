@@ -211,6 +211,7 @@ class MessageCodecTest {
                 () -> new PasswordAnswer(PasswordAnswer.Action.SUBMIT, ""));
         assertThrows(IllegalArgumentException.class,
                 () -> new PasswordAnswer(PasswordAnswer.Action.CLEAR, "secret"));
+        assertEquals("recovery", new PasswordAnswer(PasswordAnswer.Action.REQUEST_RESET, "recovery").password());
     }
 
     @Test

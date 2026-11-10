@@ -5,6 +5,7 @@ import com.mtmrails.trustedserver.client.KnownServers;
 import com.mtmrails.trustedserver.client.PlayerKeyStore;
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
+import com.mtmrails.trustedserver.core.message.PasswordAnswer;
 import com.mtmrails.trustedserver.core.session.ClientEnvironment;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -72,8 +73,8 @@ final class FabricClientEnvironment implements ClientEnvironment {
     }
 
     @Override
-    public CompletableFuture<Optional<String>> promptPassword(PasswordRequest request) {
-        CompletableFuture<Optional<String>> result = new CompletableFuture<>();
+    public CompletableFuture<Optional<PasswordAnswer>> promptPassword(PasswordRequest request) {
+        CompletableFuture<Optional<PasswordAnswer>> result = new CompletableFuture<>();
         Minecraft client = Minecraft.getInstance();
         client.execute(() -> client.setScreen(new PasswordPromptScreen(client.screen, request, result)));
         return result;
