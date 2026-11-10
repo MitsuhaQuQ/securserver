@@ -6,6 +6,8 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
+import net.minecraft.util.FormattedCharSequence;
 
 /** 登录期间缺少服务器 PSK 时显示的本地输入框。 */
 final class PskPromptScreen extends Screen {
@@ -36,6 +38,7 @@ final class PskPromptScreen extends Screen {
         input = new EditBox(font, center - 150, height / 2 - 10, 300, 20,
                 Component.literal("Base64 PSK"));
         input.setMaxLength(128);
+        input.setFormatter((text, offset) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
         addRenderableWidget(input);
         addRenderableWidget(Button.builder(Component.literal("保存并连接"), button -> submit())
                 .bounds(center - 150, height / 2 + 24, 145, 20).build());

@@ -8,6 +8,7 @@ base {
 
 repositories {
     maven("https://maven.fabricmc.net/")
+    maven("https://maven.terraformersmc.com/releases/")
 }
 
 dependencies {
@@ -15,6 +16,8 @@ dependencies {
     "mappings"(loom.officialMojangMappings())
     "modImplementation"("net.fabricmc:fabric-loader:0.16.14")
     "modImplementation"("net.fabricmc.fabric-api:fabric-api:0.92.12+1.20.1")
+    "modCompileOnly"("com.terraformersmc:modmenu:7.1.0")
+    "modLocalRuntime"("com.terraformersmc:modmenu:7.1.0")
 
     // 核心层与其依赖以 jar-in-jar 方式随 mod 打包
     for (module in listOf(":core", ":core-client", ":core-server")) {
