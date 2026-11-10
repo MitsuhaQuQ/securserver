@@ -24,7 +24,7 @@ public record ServerAuthConfig(TunnelPolicy tunnelPolicy, ValidationLevels valid
     /** 逐级附加验证开关；关闭上一层时不得开启依赖它的层。 */
     public record ValidationLevels(boolean ed25519, boolean loginPassword,
             boolean recoveryPassword, boolean newPlayerRestriction) {
-        public static final ValidationLevels DEFAULT = new ValidationLevels(true, false, false, false);
+        public static final ValidationLevels DEFAULT = new ValidationLevels(true, true, false, false);
         public static final ValidationLevels ALL = new ValidationLevels(true, true, true, true);
 
         public ValidationLevels {

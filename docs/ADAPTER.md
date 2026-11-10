@@ -57,7 +57,7 @@
 
 | 推迟 | 第一阶段的处理 |
 |---|---|
-| 正式认证协议 | Ed25519 / TOFU / SQLite 玩家公钥绑定已接入；密码界面、找回、受限状态执行与游戏内密码通道仍为后续阶段 |
+| 正式认证协议 | Ed25519 / TOFU / SQLite 玩家公钥绑定、首次设定与登录密码弹框已接入；找回密码设置入口、受限状态执行与游戏内密码通道仍为后续阶段 |
 | 服务端公钥变更确认界面 | 默认拒绝并在断开界面说明 |
 | 受限 / OP 暂停 / 游戏内 `/passwd` | 不生效（账号仍按规则记为受限，后续阶段上线后再提示设密码） |
 | 隧道模式 | 强制关闭；配置为 optional / required 时打印警告 |
@@ -70,14 +70,14 @@
 "auth": {
   "validation": {
     "ed25519": true,
-    "loginPassword": false,
+    "loginPassword": true,
     "recoveryPassword": false,
     "newPlayerRestriction": false
   }
 }
 ```
 
-后三项已有核心状态机约束，但 Fabric 密码界面、找回流程和游戏阶段权限执行尚未完成，因此不默认开启。依赖关系非法时配置加载直接失败。
+`loginPassword` 已完成 Fabric 登录界面和加密密码通道，因此默认开启。`recoveryPassword` 的输入界面已可处理服务端请求，但游戏内设置入口尚未接入；`newPlayerRestriction` 的游戏阶段执行也未完成，所以后二者暂不默认开启。依赖关系非法时配置加载直接失败。
 
 ### 4.1 第一阶段的实现与验证
 

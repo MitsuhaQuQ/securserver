@@ -102,7 +102,7 @@ To avoid spam and auto exploit bots.
     - `normal`：保持现有兼容行为，清空玩家样本，人数按 `playerCount` 配置，保留原 MOTD、favicon 和版本显示
     - `enhanced` 且 `disablePing=false`：现代状态 Ping 返回通用 `enhancedMotd`、固定通用版本名称、空 favicon、空玩家样本，并在 `playerCount=real` 时显示 0 人；响应自动附加 ServerSeekerV2 的不可见退出标记。协议号保留以便客户端判断版本兼容性；旧版 Ping 直接关闭，避免旁路泄漏
     - `enhanced` 且 `disablePing=true`：现代和旧版 Ping 均直接断开、不回应，服务器列表会显示离线；直接登录与认证流程不受影响
-23. **分级附加验证**：`server.json` 的 `auth.validation` 为每一级提供独立布尔开关。当前默认只开启已完成端到端接入的 `ed25519`；密码、找回与受限执行完成后再分别调整默认值
+23. **分级附加验证**：`server.json` 的 `auth.validation` 为每一级提供独立布尔开关。当前默认开启已完成端到端接入的 `ed25519` 与 `loginPassword`；找回密码的设置入口和游戏内受限执行完成后再分别调整其默认值
     - `ed25519`：基础 PSK / 正版令牌通过后执行服务端身份签名、客户端 TOFU、玩家 `ClientProof` 和服务端公钥绑定。关闭时直接在基础门禁后放行
     - `loginPassword`：Ed25519 通过后执行登录密码 / 新用户设定密码流程；要求 `ed25519=true`
     - `recoveryPassword`：设备公钥不匹配时允许使用找回密码；要求 `ed25519=true`

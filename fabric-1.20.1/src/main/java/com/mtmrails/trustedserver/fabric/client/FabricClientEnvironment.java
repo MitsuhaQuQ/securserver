@@ -14,10 +14,11 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
 
 /**
- * 第一阶段的客户端环境（docs/ADAPTER.md 第 4 节）：TOFU 记录与玩家密钥落盘；密码界面与公钥变更确认尚未实现——
- * SET 一律按“跳过”回答，其余密码请求按取消处理，服务端公钥变化一律拒绝。
+ * Fabric 客户端环境：TOFU 记录、玩家密钥落盘和登录阶段密码界面。服务端公钥变化仍默认拒绝，
+ * 等待后续明确确认界面。
  *
  * <p>本地存储损坏时抛出异常，状态机按内部错误失败并断开，绝不静默放弃已有的信任记录或密钥。
  */
@@ -72,6 +73,9 @@ final class FabricClientEnvironment implements ClientEnvironment {
 
     @Override
     public CompletableFuture<Optional<String>> promptPassword(PasswordRequest request) {
-        return CompletableFuture.completedFuture(Optional.empty());
+        CompletableFuture<Optional<String>> result = new CompletableFuture<>();
+        Minecraft client = Minecraft.getInstance();
+        client.execute(() -> client.setScreen(new PasswordPromptScreen(client.screen, request, result)));
+        return result;
     }
 }

@@ -31,7 +31,7 @@ class ConfigLoaderTest {
         String written = Files.readString(file, StandardCharsets.UTF_8);
         assertTrue(written.contains("\"tunnel\": \"optional\""));
         assertTrue(written.contains("\"ed25519\": true"));
-        assertTrue(written.contains("\"loginPassword\": false"));
+        assertTrue(written.contains("\"loginPassword\": true"));
         assertTrue(written.contains("设定密码后解除新用户限制")); // 中文不被转义
 
         ConfigLoader.Result reloaded = ConfigLoader.loadOrCreate(file);
