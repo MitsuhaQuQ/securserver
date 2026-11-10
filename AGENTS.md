@@ -46,7 +46,7 @@ To avoid spam and auto exploit bots.
 8. **防暴力破解**：失败次数、锁定时长、频率限制、超时等均由配置决定
 9. **密码管理**：
    - 玩家修改自己的密码默认不验证旧密码
-   - 管理员（OP）必须设置密码；未设置时允许登录，但暂时去除 OP 权限，直到设好密码
+   - 未设登录密码的 OP 可以进服。开启登录密码层时，本次 Mojang session 与原绑定设备密钥均通过验证的 OP 默认保留权限，其他 OP 暂停权限，设好密码后恢复。受限账号仍按第 14 条执行
    - 管理员重置他人密码只允许在服务端控制台执行
 10. **存储**：配置文件使用 JSON，玩家数据使用 SQLite
 11. **版本兼容（关键版本机制）**：核心认证协议单独维护一个协议版本号，客户端与服务端只要求协议版本一致；核心验证部分未改动时，小版本之间保持同一协议版本，可互相连接
@@ -102,11 +102,12 @@ To avoid spam and auto exploit bots.
     - `normal`：保持现有兼容行为，清空玩家样本，人数按 `playerCount` 配置，保留原 MOTD、favicon 和版本显示
     - `enhanced` 且 `disablePing=false`：现代状态 Ping 返回通用 `enhancedMotd`、固定通用版本名称、空 favicon、空玩家样本，并在 `playerCount=real` 时显示 0 人；响应自动附加 ServerSeekerV2 的不可见退出标记。协议号保留以便客户端判断版本兼容性；旧版 Ping 直接关闭，避免旁路泄漏
     - `enhanced` 且 `disablePing=true`：现代和旧版 Ping 均直接断开、不回应，服务器列表会显示离线；直接登录与认证流程不受影响
-23. **分级附加验证**：`server.json` 的 `auth.validation` 为每一级提供独立布尔开关。当前默认开启 `ed25519`、`loginPassword` 和 `recoveryPassword`。游戏内受限执行完成后再调整 `newPlayerRestriction` 的默认值
+23. **分级附加验证**：`server.json` 的 `auth.validation` 为每一级提供独立布尔开关。当前默认开启 `ed25519`、`loginPassword`、`recoveryPassword` 和 `newPlayerRestriction`
     - `ed25519`：基础 PSK / 正版令牌通过后执行服务端身份签名、客户端 TOFU、玩家 `ClientProof` 和服务端公钥绑定。关闭时直接在基础门禁后放行
     - `loginPassword`：Ed25519 通过后执行登录密码 / 新用户设定密码流程；要求 `ed25519=true`
     - `recoveryPassword`：设备公钥不匹配时允许使用找回密码；要求 `ed25519=true`
     - `newPlayerRestriction`：未设登录密码的新账号保持受限；要求 `ed25519=true` 且 `loginPassword=true`
+    - `requirePasswordForVerifiedOps`：开启后，正版 session 和原绑定密钥均匹配的 OP 也须设置登录密码才能使用 OP 权限。默认 `false`，开启时要求 `loginPassword=true`
     - 隧道依赖正式加密握手；`ed25519=false` 时 `auth.tunnel` 必须为 `disabled`。非法依赖组合导致服务端拒绝启动，不静默降级
 24. **密码与设备密钥恢复**：登录密码仍为可选附加验证，恢复流程不得把它退化为“只凭设备密钥即可绕过”
     - 本次连接同时通过 Mojang 正版 session 实时验证，且提交的 Ed25519 公钥与服务端**原绑定公钥一致**时，登录密码框提供“忘记密码”，允许直接设置新登录密码或明确清除密码。必须先判断原绑定匹配；不得先按正版身份改绑新设备，再用新密钥取得快速重设资格
@@ -134,3 +135,4 @@ To avoid spam and auto exploit bots.
 - 正式认证协议已升级到 v3：`PasswordAnswer` 使用显式 `SUBMIT / SKIP / REQUEST_RESET / CLEAR` 动作，`PasswordRequest` 增加 `RESET`；HKDF、签名和隧道 AAD 域标签同步为 `tsrv v3`，旧 v2 密码回答严格拒绝
 - SQLite 已实现恢复事务：以旧公钥比较并交换，在同一事务中完成设备改绑、登录密码保留 / 设置 / 清除、重设后的锁定清理和恢复审计；审计失败会回滚账号变更
 - `ResetGrant` 状态机与 Fabric 登录界面已接通：正版 session + 原绑定密钥可快速重设；offline / invalid-session 及正版新设备必须先验证找回密码。授权绑定当前会话、旧/新公钥和 transcript，60 秒失效；“设置新密码”与“明确清除密码”最终调用原子事务
+- Fabric 1.20.1 已执行新用户生存模式及指令限制。设置登录密码后立即刷新指令树和有效权限。OP 暂停按连接生效，原版 OP 名单继续由管理员管理

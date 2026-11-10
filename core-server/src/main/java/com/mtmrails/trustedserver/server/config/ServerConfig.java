@@ -14,10 +14,11 @@ import java.util.Objects;
  * @param databasePath 玩家数据库位置（相对服务端根目录）
  */
 public record ServerConfig(ServerAuthConfig auth, int authTimeoutSec, AccountServiceConfig accounts,
-        String databasePath, NetworkPolicyConfig network, StatusConfig status, RejectionText rejection) {
+        String databasePath, NetworkPolicyConfig network, StatusConfig status, RejectionText rejection,
+        String opSuspendedNotice) {
     public static final ServerConfig DEFAULT = new ServerConfig(ServerAuthConfig.defaults(), 90,
             AccountServiceConfig.DEFAULT, SqliteStore.DEFAULT_PATH, NetworkPolicyConfig.DEFAULT, StatusConfig.DEFAULT,
-            RejectionText.DEFAULT);
+            RejectionText.DEFAULT, "OP 权限已暂停，可使用 /passwd 设置登录密码");
 
     public ServerConfig {
         Objects.requireNonNull(auth, "auth");
@@ -26,6 +27,7 @@ public record ServerConfig(ServerAuthConfig auth, int authTimeoutSec, AccountSer
         Objects.requireNonNull(network, "network");
         Objects.requireNonNull(status, "status");
         Objects.requireNonNull(rejection, "rejection");
+        Objects.requireNonNull(opSuspendedNotice, "opSuspendedNotice");
         if (authTimeoutSec <= auth.passwordTimeoutSec()) {
             throw new IllegalArgumentException("authTimeoutSeconds must be greater than passwordPromptTimeoutSeconds");
         }

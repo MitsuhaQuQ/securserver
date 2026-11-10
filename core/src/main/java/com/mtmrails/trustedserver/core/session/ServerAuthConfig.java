@@ -23,9 +23,14 @@ public record ServerAuthConfig(TunnelPolicy tunnelPolicy, ValidationLevels valid
 
     /** 逐级附加验证开关；关闭上一层时不得开启依赖它的层。 */
     public record ValidationLevels(boolean ed25519, boolean loginPassword,
-            boolean recoveryPassword, boolean newPlayerRestriction) {
-        public static final ValidationLevels DEFAULT = new ValidationLevels(true, true, true, false);
-        public static final ValidationLevels ALL = new ValidationLevels(true, true, true, true);
+            boolean recoveryPassword, boolean newPlayerRestriction, boolean requirePasswordForVerifiedOps) {
+        public static final ValidationLevels DEFAULT = new ValidationLevels(true, true, true, true, false);
+        public static final ValidationLevels ALL = new ValidationLevels(true, true, true, true, true);
+
+        public ValidationLevels(boolean ed25519, boolean loginPassword,
+                boolean recoveryPassword, boolean newPlayerRestriction) {
+            this(ed25519, loginPassword, recoveryPassword, newPlayerRestriction, false);
+        }
 
         public ValidationLevels {
             if (!ed25519 && (loginPassword || recoveryPassword || newPlayerRestriction)) {
@@ -36,6 +41,16 @@ public record ServerAuthConfig(TunnelPolicy tunnelPolicy, ValidationLevels valid
                 throw new IllegalArgumentException(
                         "newPlayerRestriction requires auth.validation.loginPassword=true");
             }
+            if (requirePasswordForVerifiedOps && !loginPassword) {
+                throw new IllegalArgumentException(
+                        "requirePasswordForVerifiedOps requires auth.validation.loginPassword=true");
+            }
+        }
+
+        /** 只影响当前连接的有效权限，原版 OP 名单仍由服务端管理。 */
+        public boolean suspendOp(boolean restricted, boolean hasLoginPassword, boolean verifiedOriginalKey) {
+            return restricted || (loginPassword && !hasLoginPassword
+                    && (requirePasswordForVerifiedOps || !verifiedOriginalKey));
         }
     }
 
@@ -85,7 +100,7 @@ public record ServerAuthConfig(TunnelPolicy tunnelPolicy, ValidationLevels valid
                 "检测到新设备，已把本服务器的认证绑定更新为这台电脑");
     }
 
-    /** 完整状态机测试及未来全部功能上线后的默认组合。 */
+    /** 所有开关均开启的组合，用于完整状态机测试。 */
     public static ServerAuthConfig allValidationDefaults() {
         ServerAuthConfig defaults = defaults();
         return new ServerAuthConfig(defaults.tunnelPolicy(), ValidationLevels.ALL,

@@ -33,6 +33,8 @@ class ConfigLoaderTest {
         assertTrue(written.contains("\"ed25519\": true"));
         assertTrue(written.contains("\"loginPassword\": true"));
         assertTrue(written.contains("\"recoveryPassword\": true"));
+        assertTrue(written.contains("\"newPlayerRestriction\": true"));
+        assertTrue(written.contains("\"requirePasswordForVerifiedOps\": false"));
         assertTrue(written.contains("设定密码后解除新用户限制")); // 中文不被转义
 
         ConfigLoader.Result reloaded = ConfigLoader.loadOrCreate(file);
@@ -97,10 +99,24 @@ class ConfigLoaderTest {
                           "validation": {"ed25519": false, "loginPassword": false}}}
                 """).config();
         assertFalse(config.auth().validation().recoveryPassword());
+        assertFalse(config.auth().validation().newPlayerRestriction());
         assertTrue(error("""
                 {"auth": {"tunnel": "disabled",
                           "validation": {"ed25519": false, "loginPassword": false, "recoveryPassword": true}}}
                 """).contains("require auth.validation.ed25519"));
+    }
+
+    @Test
+    void operatorsWithVerifiedOriginalKeysCanBeRequiredToSetPassword() throws Exception {
+        var config = ConfigLoader.parse("""
+                {"auth": {"validation": {"requirePasswordForVerifiedOps": true}}}
+                """).config();
+        assertTrue(config.auth().validation().requirePasswordForVerifiedOps());
+        assertTrue(ConfigLoader.parse(ConfigLoader.toJson(config)).config().auth().validation()
+                .requirePasswordForVerifiedOps());
+        assertTrue(error("""
+                {"auth": {"validation": {"loginPassword": false, "requirePasswordForVerifiedOps": true}}}
+                """).contains("requirePasswordForVerifiedOps"));
     }
 
     @Test

@@ -107,6 +107,7 @@ public final class ServerAuthSession {
     private AccountView account;
     private RebindReason pendingRebind;
     private RebindReason rebound;
+    private boolean verifiedOriginalKey;
     private PasswordRequest.Kind pendingKind;
     private int attemptsLeft;
     private int setRejections;
@@ -290,6 +291,7 @@ public final class ServerAuthSession {
             return identityVerified(RebindReason.KEY_RESET);
         }
         if (Arrays.equals(account.playerPub(), playerPub)) {
+            verifiedOriginalKey = mojangVerified;
             return CompletableFuture.completedFuture(afterKeyMatched());
         }
         if (mojangVerified) {
@@ -513,7 +515,8 @@ public final class ServerAuthSession {
         SessionHandover handover = SessionHandover.create(keys, Side.SERVER, password, tunnel);
         outcome = new AuthOutcome.Accepted(accountId, username, playerPub,
                 config.validation().newPlayerRestriction() && account.restricted(),
-                account.hasLoginPassword(), account.hasRecoveryPassword(), config.noticesFor(account, rebound != null),
+                account.hasLoginPassword(), account.hasRecoveryPassword(), verifiedOriginalKey,
+                config.noticesFor(account, rebound != null),
                 Optional.ofNullable(rebound), handover);
         state = State.DONE;
         resetGrant = null;

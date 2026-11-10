@@ -3,7 +3,9 @@ package com.mtmrails.trustedserver.fabric.server;
 import com.mtmrails.trustedserver.core.crypto.PskWire;
 import com.mtmrails.trustedserver.core.crypto.OnlineTokenWire;
 import com.mtmrails.trustedserver.core.message.Channel;
+import com.mtmrails.trustedserver.fabric.mixin.ServerLoginPacketListenerAccessor;
 import com.mtmrails.trustedserver.server.account.PlayPasswordEndpoint;
+import java.util.UUID;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -12,6 +14,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerLoginNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
+import net.minecraft.network.Connection;
 import net.minecraft.network.FriendlyByteBuf;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.resources.ResourceLocation;
@@ -73,13 +76,19 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
             if (flow != null) {
                 flow.onDisconnect();
             }
+            if (runtime != null) {
+                runtime.closePendingHandover(
+                        ((ServerLoginPacketListenerAccessor) handler).trustedserver$connection());
+            }
         });
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             TrustedServerRuntime runtime = TrustedServerRuntime.get();
             if (runtime == null) {
                 return;
             }
-            runtime.openPasswordEndpoint(handler.getPlayer().getUUID(), new PlayPasswordEndpoint.Listener() {
+            Connection connection = TrustedServerRuntime.connectionOf(handler);
+            UUID playerId = handler.getPlayer().getUUID();
+            runtime.openPasswordEndpoint(playerId, connection, new PlayPasswordEndpoint.Listener() {
                 @Override
                 public void send(byte[] payload) {
                     server.execute(() -> {
@@ -91,23 +100,28 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
 
                 @Override
                 public void passwordSet(boolean login) {
-                    // 账号存储已更新；游戏内受限权限将在限制执行阶段接到这里。
+                    if (login) {
+                        server.execute(() -> {
+                            if (connection.isConnected()) {
+                                runtime.loginPasswordSet(handler.getPlayer());
+                            }
+                        });
+                    }
                 }
 
                 @Override
                 public void kick() {
-                    server.execute(() -> {
-                        runtime.closeHandover(handler.getPlayer().getUUID());
-                        handler.disconnect(runtime.rejection());
-                    });
+                    server.execute(() -> handler.disconnect(runtime.rejection()));
                 }
             });
+            runtime.notifySuspendedOp(handler.getPlayer());
         });
         ServerPlayNetworking.registerGlobalReceiver(PASSWORD_CHANNEL,
                 (server, handler, serverPacketListener, buf, responseSender) -> {
                     TrustedServerRuntime runtime = TrustedServerRuntime.get();
                     PlayPasswordEndpoint endpoint = runtime == null ? null
-                            : runtime.passwordEndpoint(handler.getUUID());
+                            : runtime.passwordEndpoint(handler.getUUID(),
+                                    TrustedServerRuntime.connectionOf(serverPacketListener));
                     if (endpoint == null) {
                         if (runtime != null) {
                             handler.connection.disconnect(runtime.rejection());
@@ -121,7 +135,7 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             TrustedServerRuntime runtime = TrustedServerRuntime.get();
             if (runtime != null) {
-                runtime.closeHandover(handler.getPlayer().getUUID());
+                runtime.closePlay(handler.getPlayer().getUUID(), TrustedServerRuntime.connectionOf(handler));
             }
         });
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->

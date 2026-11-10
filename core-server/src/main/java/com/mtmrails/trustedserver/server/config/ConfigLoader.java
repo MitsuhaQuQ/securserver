@@ -77,7 +77,8 @@ public final class ConfigLoader {
         ServerConfig d = ServerConfig.DEFAULT;
         try {
             ServerConfig config = new ServerConfig(readAuth(top, d), readAuthTimeout(top, d), readAccounts(top, d),
-                    readDatabase(top, d), readNetwork(top, d), readStatus(top, d), readRejection(top, d));
+                    readDatabase(top, d), readNetwork(top, d), readStatus(top, d), readRejection(top, d),
+                    top.section("notices").string("opSuspended", d.opSuspendedNotice()));
             List<String> unknown = new ArrayList<>();
             top.collectUnknown(unknown);
             return new Result(config, unknown, false);
@@ -93,13 +94,15 @@ public final class ConfigLoader {
         ServerAuthConfig a = d.auth();
         ServerAuthConfig.ValidationLevels v = a.validation();
         boolean ed25519 = validation.bool("ed25519", v.ed25519());
+        boolean loginPassword = validation.bool("loginPassword", v.loginPassword());
         return new ServerAuthConfig(
                 auth.enumValue("tunnel", a.tunnelPolicy(), ServerAuthConfig.TunnelPolicy.class),
                 new ServerAuthConfig.ValidationLevels(
                         ed25519,
-                        validation.bool("loginPassword", v.loginPassword()),
+                        loginPassword,
                         validation.bool("recoveryPassword", ed25519 && v.recoveryPassword()),
-                        validation.bool("newPlayerRestriction", v.newPlayerRestriction())),
+                        validation.bool("newPlayerRestriction", loginPassword && v.newPlayerRestriction()),
+                        validation.bool("requirePasswordForVerifiedOps", v.requirePasswordForVerifiedOps())),
                 auth.integer("maxPasswordAttempts", a.maxPasswordAttempts(), 1, 255),
                 auth.integer("passwordPromptTimeoutSeconds", a.passwordTimeoutSec(), 1, 65535),
                 notices.string("restricted", a.restrictedNotice()),
@@ -209,6 +212,7 @@ public final class ConfigLoader {
         validation.addProperty("loginPassword", c.auth().validation().loginPassword());
         validation.addProperty("recoveryPassword", c.auth().validation().recoveryPassword());
         validation.addProperty("newPlayerRestriction", c.auth().validation().newPlayerRestriction());
+        validation.addProperty("requirePasswordForVerifiedOps", c.auth().validation().requirePasswordForVerifiedOps());
         auth.add("validation", validation);
         auth.addProperty("maxPasswordAttempts", c.auth().maxPasswordAttempts());
         auth.addProperty("passwordPromptTimeoutSeconds", c.auth().passwordTimeoutSec());
@@ -219,6 +223,7 @@ public final class ConfigLoader {
         notices.addProperty("restricted", c.auth().restrictedNotice());
         notices.addProperty("recoveryReminder", c.auth().recoveryReminderNotice());
         notices.addProperty("rebind", c.auth().rebindNotice());
+        notices.addProperty("opSuspended", c.opSuspendedNotice());
         root.add("notices", notices);
 
         JsonObject password = new JsonObject();

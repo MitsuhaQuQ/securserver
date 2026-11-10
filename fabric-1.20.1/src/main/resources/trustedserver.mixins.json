@@ -13,7 +13,14 @@
     "ServerStatusPacketListenerMixin"
   ],
   "server": [
-    "QueryThreadGs4Mixin"
+    "PlayPacketAccessMixin",
+    "PlayerListPlayAccessMixin",
+    "QueryThreadGs4Mixin",
+    "RestrictedCommandsMixin",
+    "RestrictedGameModeMixin",
+    "ServerGamePacketListenerAccessor",
+    "ServerPermissionMixin",
+    "SpawnProtectionMixin"
   ],
   "client": [
     "ChatComponentPasswordHistoryMixin",

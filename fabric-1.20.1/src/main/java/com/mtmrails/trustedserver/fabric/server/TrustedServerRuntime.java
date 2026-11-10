@@ -1,9 +1,10 @@
 package com.mtmrails.trustedserver.fabric.server;
 
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
-import com.mtmrails.trustedserver.core.crypto.SessionHandover;
+import com.mtmrails.trustedserver.core.session.AuthOutcome;
 import com.mtmrails.trustedserver.core.session.ServerAuthConfig;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
+import com.mtmrails.trustedserver.fabric.mixin.ServerGamePacketListenerAccessor;
 import com.mtmrails.trustedserver.server.ServerIdentity;
 import com.mtmrails.trustedserver.server.PresharedKeyFile;
 import com.mtmrails.trustedserver.server.OnlineTokenStore;
@@ -31,8 +32,12 @@ import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.status.ServerStatus;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.server.network.ServerLoginPacketListenerImpl;
 
 /**
@@ -54,11 +59,30 @@ public final class TrustedServerRuntime {
     private final SecureRandom random = new SecureRandom();
     private final ScheduledExecutorService scheduler;
     final Map<ServerLoginPacketListenerImpl, LoginFlow> flows = new ConcurrentHashMap<>();
-    private record PendingHandover(String accountId, SessionHandover handover) {
+    private static final class PlayAccess {
+        final Connection connection;
+        final AuthOutcome.Accepted login;
+        volatile boolean restricted;
+        volatile boolean hasPassword;
+        volatile PlayPasswordEndpoint endpoint;
+
+        PlayAccess(Connection connection, AuthOutcome.Accepted login) {
+            this.connection = connection;
+            this.login = login;
+            restricted = login.restricted();
+            hasPassword = login.hasLoginPassword();
+        }
+
+        void close() {
+            if (endpoint != null) {
+                endpoint.close();
+            }
+            login.handover().close();
+        }
     }
 
-    private final Map<UUID, PendingHandover> handovers = new ConcurrentHashMap<>();
-    private final Map<UUID, PlayPasswordEndpoint> passwordEndpoints = new ConcurrentHashMap<>();
+    private final Map<Connection, AuthOutcome.Accepted> handovers = new ConcurrentHashMap<>();
+    private final Map<UUID, PlayAccess> playing = new ConcurrentHashMap<>();
 
     private TrustedServerRuntime(ServerConfig config, ServerIdentity.Loaded identity,
             PresharedKeyFile.Loaded psk, OnlineTokenStore onlineTokens, AccountService accounts) {
@@ -138,7 +162,7 @@ public final class TrustedServerRuntime {
         if (runtime != null) {
             runtime.scheduler.shutdownNow();
             runtime.handovers.values().forEach(pending -> pending.handover().close());
-            runtime.passwordEndpoints.values().forEach(PlayPasswordEndpoint::close);
+            runtime.playing.values().forEach(PlayAccess::close);
             runtime.accounts.close();
             Arrays.fill(runtime.psk, (byte) 0);
         }
@@ -257,40 +281,126 @@ public final class TrustedServerRuntime {
         return flows.get(handler);
     }
 
-    void registerHandover(UUID player, String accountId, SessionHandover handover) {
-        PendingHandover previous = handovers.put(player, new PendingHandover(accountId, handover));
+    void registerHandover(Connection connection, AuthOutcome.Accepted accepted) {
+        AuthOutcome.Accepted previous = handovers.put(connection, accepted);
         if (previous != null) {
             previous.handover().close();
         }
     }
 
-    PlayPasswordEndpoint openPasswordEndpoint(UUID player, PlayPasswordEndpoint.Listener listener) {
-        PendingHandover pending = handovers.remove(player);
-        if (pending == null) {
-            return null;
+    void closePendingHandover(Connection connection) {
+        AuthOutcome.Accepted pending = handovers.remove(connection);
+        if (pending != null) {
+            pending.handover().close();
         }
-        PlayPasswordEndpoint endpoint = new PlayPasswordEndpoint(pending.accountId(),
-                pending.handover().passwordChannel(), accounts, listener, Clock.systemUTC(),
-                authConfig.validation().loginPassword(), authConfig.validation().recoveryPassword());
-        PlayPasswordEndpoint previous = passwordEndpoints.put(player, endpoint);
+    }
+
+    /** 在原版载入玩家模式、生成能力及指令树之前安装权限状态。 */
+    public boolean beginPlay(Connection connection, ServerPlayer player) {
+        AuthOutcome.Accepted accepted = handovers.remove(connection);
+        if (accepted == null) {
+            if (authConfig.validation().ed25519()) {
+                connection.disconnect(rejection());
+                return false;
+            }
+            return true;
+        }
+        PlayAccess previous = playing.put(player.getUUID(), new PlayAccess(connection, accepted));
         if (previous != null) {
             previous.close();
         }
-        return endpoint;
+        return true;
     }
 
-    PlayPasswordEndpoint passwordEndpoint(UUID player) {
-        return passwordEndpoints.get(player);
+    private PlayAccess playAccess(UUID player, Connection connection) {
+        PlayAccess access = playing.get(player);
+        return access != null && access.connection == connection ? access : null;
     }
 
-    void closeHandover(UUID player) {
-        PlayPasswordEndpoint endpoint = passwordEndpoints.remove(player);
-        if (endpoint != null) {
-            endpoint.close();
+    static Connection connectionOf(ServerGamePacketListenerImpl listener) {
+        return ((ServerGamePacketListenerAccessor) listener).trustedserver$connection();
+    }
+
+    String playAccountId(ServerPlayer player) {
+        PlayAccess access = playAccess(player.getUUID(), connectionOf(player.connection));
+        return access == null ? null : access.login.accountId();
+    }
+
+    public boolean restricted(ServerPlayer player) {
+        // 载入玩家存档时原版尚未设置 player.connection。
+        PlayAccess access = player.connection == null ? playing.get(player.getUUID())
+                : playAccess(player.getUUID(), connectionOf(player.connection));
+        return access != null && access.restricted;
+    }
+
+    public boolean opSuspended(UUID player) {
+        PlayAccess access = player == null ? null : playing.get(player);
+        return access != null && authConfig.validation().suspendOp(
+                access.restricted, access.hasPassword, access.login.verifiedOriginalKey());
+    }
+
+    void notifySuspendedOp(ServerPlayer player) {
+        String notice = config.opSuspendedNotice();
+        if (!notice.isEmpty() && opSuspended(player.getUUID())
+                && player.server.getPlayerList().getOps().get(player.getGameProfile()) != null) {
+            player.sendSystemMessage(Component.literal("[TrustedServer] " + notice));
         }
-        PendingHandover pending = handovers.remove(player);
-        if (pending != null) {
-            pending.handover().close();
+    }
+
+    void openPasswordEndpoint(UUID player, Connection connection, PlayPasswordEndpoint.Listener listener) {
+        PlayAccess access = playAccess(player, connection);
+        if (access != null) {
+            access.endpoint = new PlayPasswordEndpoint(access.login.accountId(),
+                    access.login.handover().passwordChannel(), accounts, listener, Clock.systemUTC(),
+                    authConfig.validation().loginPassword(), authConfig.validation().recoveryPassword());
+        }
+    }
+
+    PlayPasswordEndpoint passwordEndpoint(UUID player, Connection connection) {
+        PlayAccess access = playAccess(player, connection);
+        return access == null ? null : access.endpoint;
+    }
+
+    void closePlay(UUID player, Connection connection) {
+        PlayAccess access = playAccess(player, connection);
+        if (access != null && playing.remove(player, access)) {
+            access.close();
+        }
+    }
+
+    /** 必须在服务端线程调用，且以连接区分同 UUID 的旧会话。 */
+    void loginPasswordSet(ServerPlayer player) {
+        PlayAccess access = playAccess(player.getUUID(), connectionOf(player.connection));
+        if (access != null) {
+            access.hasPassword = true;
+            access.restricted = false;
+            player.server.getPlayerList().sendPlayerPermissionLevel(player);
+        }
+    }
+
+    void trustOnlinePlayer(MinecraftServer server, String accountId) {
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            PlayAccess access = playAccess(player.getUUID(), connectionOf(player.connection));
+            if (access != null && access.login.accountId().equals(accountId) && access.restricted) {
+                access.restricted = false;
+                server.getPlayerList().sendPlayerPermissionLevel(player);
+            }
+        }
+    }
+
+    void disconnectResetAccount(MinecraftServer server, String accountId) {
+        // 账号重置后用新的认证重新判定限制和 OP，避免继续使用登录时的状态。
+        handovers.forEach((connection, accepted) -> {
+            if (accepted.accountId().equals(accountId)) {
+                connection.disconnect(Component.literal("认证资料已重置，请重新登录"));
+                closePendingHandover(connection);
+            }
+        });
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            PlayAccess access = playAccess(player.getUUID(), connectionOf(player.connection));
+            if (access != null && access.login.accountId().equals(accountId)) {
+                player.connection.disconnect(Component.literal("认证资料已重置，请重新登录"));
+            }
         }
     }
 

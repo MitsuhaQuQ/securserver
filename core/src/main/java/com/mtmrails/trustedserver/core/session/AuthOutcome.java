@@ -8,10 +8,11 @@ import java.util.Objects;
 public sealed interface AuthOutcome {
     /**
      * 放行：已收到 FinishAck。{@code restricted} 等字段反映本次认证结束时的账号状态，
-     * 供上层应用新用户限制、OP 暂停等规则。{@code reboundBy} 非空表示本次登录把账号改绑到了当前设备的密钥。
+     * {@code verifiedOriginalKey} 表示本次 Mojang session 与进入认证时已绑定的设备密钥均已验证。
+     * {@code reboundBy} 非空表示本次登录把账号改绑到了当前设备的密钥。
      */
     record Accepted(String accountId, String username, byte[] playerPub, boolean restricted,
-            boolean hasLoginPassword, boolean hasRecoveryPassword, List<String> notices,
+            boolean hasLoginPassword, boolean hasRecoveryPassword, boolean verifiedOriginalKey, List<String> notices,
             java.util.Optional<RebindReason> reboundBy, SessionHandover handover) implements AuthOutcome {
         public Accepted {
             Objects.requireNonNull(accountId, "accountId");

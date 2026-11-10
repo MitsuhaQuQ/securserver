@@ -394,7 +394,10 @@ class AuthSessionTest {
     @Test
     void invalidSessionWithMatchingKeyIsAccepted() {
         accounts.put(UUID, clientKey(), false, null, "rec");
-        assertTrue(invalidSessionHandshake().run().accepted().reboundBy().isEmpty());
+        var accepted = invalidSessionHandshake().run().accepted();
+        assertTrue(accepted.reboundBy().isEmpty());
+        assertFalse(accepted.verifiedOriginalKey());
+        assertTrue(ServerAuthConfig.ValidationLevels.DEFAULT.suspendOp(false, false, accepted.verifiedOriginalKey()));
     }
 
     @Test
@@ -412,6 +415,7 @@ class AuthSessionTest {
         Handshake h = onlineHandshake().run();
         AuthOutcome.Accepted accepted = h.accepted();
         assertEquals(java.util.Optional.of(RebindReason.ONLINE_MODE_IDENTITY), accepted.reboundBy());
+        assertFalse(accepted.verifiedOriginalKey());
         assertArrayEquals(h.clientPublicKey(), accounts.accounts.get(UUID).playerPub);
         assertEquals(List.of(RebindReason.ONLINE_MODE_IDENTITY), accounts.rebindReasons);
         assertTrue(env.prompts.isEmpty());
@@ -456,8 +460,24 @@ class AuthSessionTest {
         accounts.put(UUID, clientKey(), false, null, "rec");
         Handshake h = onlineHandshake().run();
         assertTrue(h.accepted().reboundBy().isEmpty());
+        assertTrue(h.accepted().verifiedOriginalKey());
+        assertFalse(ServerAuthConfig.ValidationLevels.DEFAULT.suspendOp(false, false, h.accepted().verifiedOriginalKey()));
         assertTrue(accounts.rebinds.isEmpty());
         assertEquals(List.of(), h.clientResult().notices());
+    }
+
+    @Test
+    void opExemptionAppliesOnlyToTheAlreadyBoundKeyAndRespectsRestrictionAndStrictMode() {
+        accounts.put(UUID, clientKey(), true, null, "rec");
+        env.answer((String) null);
+        var accepted = onlineHandshake().run().accepted();
+        assertTrue(accepted.verifiedOriginalKey());
+        assertTrue(accepted.restricted());
+        var defaults = ServerAuthConfig.ValidationLevels.DEFAULT;
+        assertTrue(defaults.suspendOp(accepted.restricted(), false, accepted.verifiedOriginalKey()));
+        assertFalse(defaults.suspendOp(false, true, false));
+        assertTrue(ServerAuthConfig.ValidationLevels.ALL.suspendOp(false, false, true));
+        assertFalse(ServerAuthConfig.ValidationLevels.ALL.suspendOp(false, true, true));
     }
 
     @Test

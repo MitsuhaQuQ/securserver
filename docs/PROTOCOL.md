@@ -3,7 +3,7 @@
 > 协议版本：`3`（草案）
 > 需求与决策见 [AGENTS.md](../AGENTS.md)。本文只描述线上协议、密码学与状态机。
 
-当前协议按威胁模型 A 定义。威胁模型 B 仅作预留，规则暂未定义；不据此增加强制设密、禁止跳过或其他认证分支。现有登录密码、找回密码及 OP 必须设密规则仍按本文与 AGENTS.md 执行。
+当前协议按威胁模型 A 定义。威胁模型 B 仅作预留，规则暂未定义。登录密码、找回密码及 OP 暂停规则见第 6 节和 AGENTS.md。
 
 ## 1. 总览
 
@@ -410,11 +410,11 @@ notices        : string × notice_count   客户端进服后要显示的提示�
 - 同一玩家同时只能有一个请求在处理，每分钟最多 5 次；超出时返回 `PasswordResult(RATE_LIMITED)`。结果按请求顺序加密发送
 - 服务端在游戏阶段的密码通道上只接受 SetPassword / SetRecoveryPassword；解密失败、格式错误、重放或其他类型均按 4.3.3 踢出玩家，之后不再处理该通道的任何数据。设定登录密码成功即解除受限（6.1），设定找回密码不改变受限状态
 - 服务端依然注册这两个命令，但直接通过聊天执行时一律拒绝并提示，并且**不写入命令日志**
-- 管理员重置只能在服务端控制台执行：`trustedserver reset <player> key|password|recovery|all`
+- 管理员重置只能在服务端控制台执行。Fabric 的命令形式为 `trustedserver reset key|password|all <player>`：
   - `key`：清空设备绑定，保留密码与受限状态；下次登录直接绑定新设备（设了登录密码仍须先输对，见 4.6）
   - `password`：清除登录密码，恢复受限（6.1）
-  - `recovery`：清除找回密码
   - `all`：删除整个账号，下次按新用户处理
+  - 核心账号服务还支持单独清除找回密码，Fabric 控制台入口待接入
 - 密码规则（服务端配置，默认）：6–128 个 Unicode 码点；登录密码与找回密码不能相同。游戏内设定不符合规则时返回 `PasswordResult(REJECTED)`
 
 ### 6.1 新用户受限状态
@@ -428,9 +428,12 @@ notices        : string × notice_count   客户端进服后要显示的提示�
   - **玩家设定登录密码后自动解除**：进入游戏前在 SET 提示框中设定，或进入游戏后用 `/passwd` 设定。依据是威胁模型 A：自动 bot 脚本不会针对本 mod 特化，不会走密码通道设密码
   - 受限玩家每次登录都会再次弹出 SET 提示框，直到设定密码
   - 管理员也可以在服务端控制台执行 `trustedserver trust <player>` 手动解除
-  - 管理员用 `trustedserver reset <player> password|all` 清除密码后，该玩家恢复受限
+  - 管理员用 `trustedserver reset password|all <player>` 清除密码后，在线玩家重新登录时恢复受限
 - 受限期间每次进服都通过 Finish 的 `notices` 提示“设定密码后解除限制”
 - 受限玩家同时是 OP 时，以受限为准，OP 权限一并暂停
+- 开启登录密码层时，未设登录密码的 OP 默认暂停权限。本次 Mojang session 验证成功且设备公钥与登录开始时的原绑定匹配时，未受限的 OP 默认豁免。设置 `auth.validation.requirePasswordForVerifiedOps=true` 可取消该豁免
+- OP 暂停只影响当前连接的有效权限。设置登录密码后重新计算原版权限并刷新指令树，保留管理员在暂停期间执行的授权或撤销操作
+- OP 暂停的进服提醒由 `notices.opSuspended` 配置，空字符串关闭提醒
 
 ## 7. 拦截与限流（握手之前）
 

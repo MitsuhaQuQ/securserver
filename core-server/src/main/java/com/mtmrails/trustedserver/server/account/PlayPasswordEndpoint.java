@@ -103,10 +103,11 @@ public final class PlayPasswordEndpoint {
                 if (closed) {
                     return;
                 }
+                if (outcome.status() == PasswordResult.Status.OK) {
+                    // 先通知适配层更新权限，再发送成功响应。
+                    listener.passwordSet(login);
+                }
                 reply(outcome);
-            }
-            if (outcome.status() == PasswordResult.Status.OK) {
-                listener.passwordSet(login);
             }
         });
     }

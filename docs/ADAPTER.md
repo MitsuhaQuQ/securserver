@@ -22,7 +22,7 @@
 | 登录超时 | Mixin 放宽 `ServerLoginPacketListenerImpl` 的 600 tick 限制，并由我们按配置计时 |
 | invalid session 回退 | Mixin 拦截 Mojang 验证失败时的断开，改为按第 17 条确定账号与 UUID 后继续 |
 | 连接结束 | `ConnectionGate.endLogin(地址, 是否完成可信握手)`；放行后 `AccountService.recordLogin` |
-| 新用户受限 / OP 暂停 | 玩家加入后：强制生存模式、拦截该玩家的全部指令、下发空指令树；`OpGuard` 暂停 OP |
+| 新用户受限 / OP 暂停 | 在载入玩家时强制生存模式，拦截指令执行和补全，并发送空指令树。OP 权限按连接暂停。通过密码通道设定登录密码后即时刷新权限 |
 | 游戏内密码通道 | Fabric API `ServerPlayNetworking`，每位玩家一个 `PlayPasswordEndpoint` |
 | 控制台命令 | `trustedserver reset/trust/fingerprint`，只允许控制台来源 |
 | 服务器列表 | Mixin `ServerStatusPacketListenerImpl` 与旧版 Ping 处理：限流、清空玩家样本、`StatusSanitizer` 人数；强制关闭 query |
@@ -57,9 +57,8 @@
 
 | 推迟 | 第一阶段的处理 |
 |---|---|
-| 正式认证协议 | Ed25519 / TOFU / SQLite 玩家公钥绑定、登录及找回密码弹框、游戏内密码通道已接入。受限状态执行仍为后续阶段 |
+| 正式认证协议 | Ed25519 / TOFU / SQLite 玩家公钥绑定、登录及找回密码弹框、游戏内密码通道已接入 |
 | 服务端公钥变更确认界面 | 默认拒绝并在断开界面说明 |
-| 受限 / OP 暂停 | 尚不执行游戏内权限限制；`/passwd` 已可安全设定密码并在账号存储中解除受限状态 |
 | 隧道模式 | 强制关闭；配置为 optional / required 时打印警告 |
 | invalid session 回退 | 已纳入第一阶段：切换为离线 UUID 后必须通过 PSK；已声明的正版同名禁止回退 |
 | 导出 / 导入按钮 | 已通过可选 Mod Menu 设置入口接入：默认全选、分页选择、密码加密、明文风险确认、只读预检与显式冲突覆盖 |
@@ -72,14 +71,15 @@
     "ed25519": true,
     "loginPassword": true,
     "recoveryPassword": true,
-    "newPlayerRestriction": false
+    "newPlayerRestriction": true,
+    "requirePasswordForVerifiedOps": false
   }
 }
 ```
 
-`loginPassword` 与 `recoveryPassword` 默认开启。现有配置显式指定的布尔值优先。`newPlayerRestriction` 的游戏阶段执行尚未完成，默认关闭。依赖关系非法时配置加载直接失败。
+`loginPassword`、`recoveryPassword` 与 `newPlayerRestriction` 默认开启，显式配置的布尔值优先。依赖关系非法时配置加载直接失败。
 
-`loginPassword=true` 表示“支持并验证已设置的登录密码”，不表示强制每个账号设置密码。未设置密码的账号只验证绑定的 Ed25519 玩家密钥；玩家可通过客户端导出/导入该密钥迁移电脑。只有主动使用 `/passwd` 设置后，后续登录才增加密码验证。
+玩家可以跳过设置登录密码，并用已绑定的 Ed25519 密钥登录。启用 `newPlayerRestriction` 时，受限账号可通过设置登录密码或由管理员执行 `trustedserver trust <player>` 解除限制。开启登录密码层后，未设密码的 OP 在本次 Mojang session 和原绑定密钥均匹配时默认保留 OP 权限。受限账号仍执行新用户限制。若要求这类 OP 也设置密码，将 `requirePasswordForVerifiedOps` 设为 `true`。
 
 ### 4.1 第一阶段的实现与验证
 

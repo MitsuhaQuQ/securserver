@@ -434,7 +434,8 @@ public final class LoginFlow {
             toSend = new ArrayList<>(held);
             held.clear();
             if (accepted != null) {
-                runtime.registerHandover(profile.getId(), accepted.accountId(), accepted.handover());
+                runtime.registerHandover(
+                        ((ServerLoginPacketListenerAccessor) handler).trustedserver$connection(), accepted);
             }
         }
         cancelTimeout();
