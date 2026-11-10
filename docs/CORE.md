@@ -199,8 +199,11 @@ public final class SecureMessageChannel {
 - 状态机本身不处理超时；超时由 common 层计时，到点后调用 `session.timeout()` 得到 `Rejected(TIMEOUT)`。若此时有回答仍在后台处理，清理推迟到它完成时，且结果一律改判超时
 - 每个连接同时只能有一个 `onAnswer` / `onQuery` 在途；账号操作可在其他线程完成，上层须把后续动作切回该连接的事件循环
 - 任何协议、密码学或账号存储失败都会废弃本连接的所有通道与会话密钥（PROTOCOL.md 4.3.3）
-- 公钥不一致时：本连接通过 Mojang 验证（`mojangVerified`）则直接改绑到新设备（`RebindReason.ONLINE_MODE_IDENTITY`），否则须输对找回密码（`RebindReason.RECOVERY`）。`mojangVerified` 与 `onlineMode` 分开传入：正版服务器上 session 无效的连接 `onlineMode = true`、`mojangVerified = false`，按无验证回退
-- 改绑一律推迟到整个认证成功前才提交：已设登录密码时，登录密码也须验证通过，避免只掌握找回密码（或只掌握正版账号）、却输错登录密码的一方改掉原有绑定。`Accepted.reboundBy` 记录本次改绑原因，Finish 下发 `rebindNotice` 提示
+- 公钥不一致时：本连接通过 Mojang 验证（`mojangVerified`）可按普通新设备流程改绑（`RebindReason.ONLINE_MODE_IDENTITY`），否则须输对找回密码（`RebindReason.RECOVERY`）。`mojangVerified` 与 `onlineMode` 分开传入：正版服务器上 session 无效的连接 `onlineMode = true`、`mojangVerified = false`，按无验证回退
+- 密码重设新增内存态 `ResetGrant`：正版 session + 原绑定公钥一致，或新设备找回密码验证正确时建立；绑定账号、旧/新公钥、transcript 与连接，60 秒或一次使用后失效。它不是客户端可保存的令牌
+- 找回密码正确后可保留原登录密码继续验证，也可进入 RESET 设置新密码或清除密码。新设备场景使用存储层事务 `recoverAccount(expectedOldPub, newPub, passwordChange)`，以旧公钥为条件原子提交改绑与密码变更；并发更新失败返回 `ACCOUNT_CONFLICT`
+- 正版快速重设必须在任何自动改绑之前检查原绑定公钥一致；新设备仅有正版 session 时仍须原登录密码，不能先改绑后重设
+- `Accepted.reboundBy` 记录本次改绑原因，Finish 下发 `rebindNotice` 提示。恢复审计区分 `online_password_reset`、`recovery_rebind` 与 `recovery_password_reset`
 - 账号存在但绑定已被管理员清空时（`AccountView.keyBound()` 为假），按 `RebindReason.KEY_RESET` 处理：已设登录密码则先验证，再用 `claimUnboundKey` 原子绑定，被抢先时按 `ACCOUNT_CONFLICT` 拒绝
 - `setLoginPassword` 返回是否符合密码规则；不符合时重新发 SET，连续不符合达到 `maxPasswordAttempts` 次按跳过处理
 - 账号存储线程池排满（`RejectedExecutionException`，无论同步抛出还是 future 失败）按 `SERVER_BUSY` 拒绝

@@ -288,22 +288,22 @@ player_sig     : 64 bytes   Sign(player_key, "tsrv v2 client" || transcript_0)
 | 该身份无绑定记录（新用户名） | 绑定 `player_pub`（TOFU），标记为**受限**（见 6.1），发 PasswordRequest(SET) |
 | 公钥一致，受限且未设登录密码 | 发 PasswordRequest(SET) |
 | 公钥一致，未受限且未设登录密码 | 进入 Finish |
-| 公钥一致，已设登录密码 | 发 PasswordRequest(LOGIN) |
+| 公钥一致，已设登录密码 | 发 PasswordRequest(LOGIN)；若本连接同时通过 Mojang session 验证，可请求快速重设 |
 | 账号存在但设备绑定已被管理员清空（`reset key`） | 视同身份已确认：已设登录密码则先发 PasswordRequest(LOGIN)，通过后才绑定；否则立即绑定，按“公钥一致”的规则继续。绑定为原子操作，并发连接抢先时按冲突拒绝 |
 | 公钥不一致，本连接已通过 Mojang session 验证 | 视为连接可信（新设备）：已设登录密码则发 PasswordRequest(LOGIN)，通过后才改绑；否则立即改绑，按“公钥一致”的规则继续。Finish 的 `notices` 下发改绑提示 |
-| 公钥不一致，未经 Mojang 验证，已设找回密码 | 发 PasswordRequest(RECOVERY) |
+| 公钥不一致，未经 Mojang 验证，已设找回密码 | 发 PasswordRequest(RECOVERY)；验证成功后可保留原登录密码，或请求重设 / 清除登录密码 |
 | 公钥不一致，未经 Mojang 验证，未设找回密码 | 断开，并明确提示“密钥不匹配，请联系管理员重置” |
 
 “未经 Mojang 验证”包括离线模式，以及正版服务器上 session 无效（含 Mojang 会话服务器不可用）而回退为无验证的连接。
 
-**Mojang 验证的作用范围**：它只保证本连接的身份可信，替代“设备密钥是否匹配”这一项；之后的玩家认证全部保留——登录密码、受限账号的设定密码提示、错误次数与锁定均照常执行，改绑同样推迟到登录密码验证通过之后。ServerHello 中的 `online_mode` 仍是服务器配置，不表示某个连接是否通过了 Mojang 验证；后者只在服务端本地使用，不上线。
+**Mojang 验证的作用范围**：它保证本连接的正版身份可信，可替代“设备密钥是否匹配”这一项来完成普通的新设备改绑；登录密码、错误次数与锁定仍然保留。只有当 Mojang session 与服务端原绑定设备密钥在同一连接上同时验证正确时，才额外允许快速重设登录密码。不得先改绑再授予该资格。ServerHello 中的 `online_mode` 仍是服务器配置，不表示某个连接是否通过了 Mojang 验证；后者只在服务端本地使用，不上线。
 
 ### 4.7 PasswordRequest（S→C，密码通道，type=0x05）
 
 以频道 `trustedserver:password` 的 login query 发送，用 `k_pw_s2c` 加密。
 
 ```
-kind           : u8   1 = LOGIN, 2 = RECOVERY, 3 = SET
+kind           : u8   1 = LOGIN, 2 = RECOVERY, 3 = SET, 4 = RESET
 attempts_left  : u8   SET 时无意义，固定为 0
 timeout_sec    : u16
 ```
@@ -311,28 +311,45 @@ timeout_sec    : u16
 客户端弹出输入框，标题和说明按 `kind` 区分：
 
 - LOGIN：输入登录密码
-- RECOVERY：输入找回密码，并明确提示“找回成功后，当前设备的新密钥将取代旧绑定”
+- RECOVERY：输入找回密码，并可选择“保留原登录密码”或“同时重设登录密码”；明确提示成功后当前设备密钥将取代旧绑定
 - SET：设定登录密码，包含“密码”和“确认密码”两个输入框，两次输入一致才允许提交（在客户端本地校验）。提示“进入游戏前设定密码可免受新用户限制”，并提供“跳过”按钮
+- RESET：设置新登录密码，或明确选择清除密码。客户端提示本次授权来源（正版 session + 原绑定密钥，或找回密码），但不显示任何密钥材料
 
 ### 4.8 PasswordAnswer（C→S，密码通道，type=0x06）
 
 用 `k_pw_c2s` 加密。服务端只接受对密码通道 query 的回答里出现此类型，出现在认证通道里即断开。
 
 ```
-password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字节）；仅 SET 允许为空
+action         : u8       0 = SUBMIT, 1 = SKIP, 2 = REQUEST_RESET, 3 = CLEAR
+password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字节）
 ```
 
 - 密码只在已认证的加密通道里传输，服务端用 Argon2id 校验，客户端不保存密码
 - 不采用 OPAQUE 一类的 PAKE（口令认证密钥交换）：服务端身份已固定，再加上 AEAD，足以防窃听和中间人，复杂度低很多
 - 判定流程：
   - LOGIN 正确：进入 Finish
+  - LOGIN + REQUEST_RESET：仅当本连接已通过 Mojang session 验证，且本次 `player_pub` 与请求开始时的原绑定公钥一致时，发 PasswordRequest(RESET)；否则拒绝该动作，但不泄漏额外账号信息
   - RECOVERY 正确：
-    - 已设登录密码：先发 PasswordRequest(LOGIN)，登录密码也验证通过后，才把绑定改为本次的 `player_pub` 并进入 Finish。改绑推迟提交，避免只掌握找回密码、却输错登录密码的一方改掉原有绑定；登录密码错误次数用尽时，原有绑定保持不变
-    - 未设登录密码：立即把绑定改为本次的 `player_pub`，然后按 4.6 中“公钥一致”的规则继续（受限则发 PasswordRequest(SET)，否则进入 Finish）
+    - SUBMIT 且已设登录密码：发 PasswordRequest(LOGIN)，登录密码通过后以比较并交换方式改绑
+    - SUBMIT 且未设登录密码：以比较并交换方式改绑，然后进入 Finish
+    - REQUEST_RESET：建立仅属于当前连接的一次性恢复授权并发 PasswordRequest(RESET)，不立即改绑
     - 找回成功后转入登录密码时，登录密码的尝试次数重新计算
-  - SET 且 `password` 非空：符合密码规则则用 Argon2id 保存为登录密码，**解除受限**，进入 Finish；不符合则重新发 PasswordRequest(SET)，连续不符合的次数达到登录密码尝试次数时按跳过处理（保持受限）
-  - SET 且 `password` 为空（玩家点了“跳过”或提示框超时前关闭）：保持受限，进入 Finish
+  - RESET + SUBMIT：校验新密码规则及其与找回密码不同，然后提交重设。新设备找回场景把新密码哈希和新设备公钥放在同一 SQLite 事务中写入；正版快速重设只更新密码哈希
+  - RESET + CLEAR：经客户端二次确认后清除登录密码。新设备找回场景把清除密码和设备改绑放在同一事务中；账号恢复为仅 Ed25519 密钥验证，`restricted` 的实际执行仍由 `newPlayerRestriction` 决定
+  - SET + SUBMIT：符合密码规则则用 Argon2id 保存为登录密码，**解除受限**，进入 Finish；不符合则重新发 PasswordRequest(SET)，连续不符合的次数达到登录密码尝试次数时按跳过处理（保持受限）
+  - SET + SKIP：保持受限，进入 Finish
   - LOGIN / RECOVERY 错误：失败计数加 1，`attempts_left > 0` 时重发请求，否则锁定并断开
+
+`action` 字段、RESET kind 与恢复事务是下一阶段的协议扩展；实现时必须同步提升核心协议版本，旧客户端不得把带 action 的消息按旧 PasswordAnswer 解码。
+
+### 4.8.1 一次性密码重设授权
+
+- 授权只保存在当前 `ServerAuthSession` 内存中，不作为可复制令牌发送或展示给客户端
+- 授权绑定账号标识、请求开始时的旧公钥、本次新公钥、`transcript_0` 和当前连接；最长 60 秒，断线、超时、使用一次或任何协议错误后立即销毁
+- 正版快速重设的前提是 `mojangVerified=true` 且新旧公钥一致；导入备份恢复出的同一密钥符合条件
+- offline / invalid-session 新设备恢复的前提是找回密码正确；最终事务使用旧公钥作为更新条件，条件不匹配时返回 `ACCOUNT_CONFLICT`
+- 找回密码错误仍计入找回密码尝试、账号锁定和 IP 锁定。重设成功清零登录密码错误累计，但保留全部恢复审计
+- 客户端永远只显示“本机认证密钥已验证”等用户语言，不要求玩家输入、复制或查看 Ed25519 私钥
 
 ### 4.9 Finish（S→C，加密，type=0x07）
 
