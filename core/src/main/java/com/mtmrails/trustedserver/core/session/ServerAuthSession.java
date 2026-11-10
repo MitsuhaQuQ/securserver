@@ -52,8 +52,7 @@ import java.util.concurrent.RejectedExecutionException;
  *
  * <p>公钥与绑定不一致时：本连接已通过 Mojang session 验证（{@code mojangVerified}）时视为连接可信，
  * 直接改绑到新设备；离线模式，或正版服务器上 session 无效而回退为无验证的连接，须输对找回密码。
- * Mojang 验证只替代设备密钥这一项，之后的玩家认证（登录密码、设定密码、受限）全部保留。两种情况下，改绑都推迟到整个认证成功前才提交：已设登录密码时，
- * 必须连登录密码也验证通过，避免只掌握找回密码（或只掌握正版账号）、却输错登录密码的一方改掉原有绑定。
+ * 保留原登录密码时，改绑须等到登录密码验证通过。通过找回密码取得重设授权后，也可原子地更新绑定和登录密码。
  */
 public final class ServerAuthSession {
     private enum State {
@@ -415,7 +414,7 @@ public final class ServerAuthSession {
 
     private CompletableFuture<ServerStep> applyReset(PasswordAnswer answer) {
         ResetGrant grant = resetGrant;
-        if (grant == null || clock.millis() > grant.expiresAt()
+        if (grant == null || clock.millis() >= grant.expiresAt()
                 || !Arrays.equals(grant.newPub(), playerPub)
                 || !Arrays.equals(grant.transcript(), transcript)) {
             resetGrant = null;
@@ -470,11 +469,13 @@ public final class ServerAuthSession {
         return commitRebind(reason).thenApply(bound -> bound ? finish() : reject(RejectReason.ACCOUNT_CONFLICT));
     }
 
-    /** 提交改绑；管理员清空后的重新绑定须原子地抢占，被并发连接抢先时返回 {@code false}。 */
+    /** 提交改绑；管理员重置和找回路径需要确认绑定仍与开始认证时一致。 */
     private CompletableFuture<Boolean> commitRebind(RebindReason reason) {
-        CompletableFuture<Boolean> committed = reason == RebindReason.KEY_RESET
-                ? accounts.claimUnboundKey(accountId, playerPub)
-                : accounts.rebind(accountId, playerPub, reason).thenApply(v -> true);
+        CompletableFuture<Boolean> committed = switch (reason) {
+            case KEY_RESET -> accounts.claimUnboundKey(accountId, playerPub);
+            case RECOVERY -> accounts.rebindRecoveredKey(accountId, account.playerPub(), playerPub);
+            case ONLINE_MODE_IDENTITY -> accounts.rebindOnline(accountId, playerPub).thenApply(v -> true);
+        };
         return committed.thenApply(bound -> {
             if (bound) {
                 account = account.withPlayerPub(playerPub);

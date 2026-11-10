@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
 import com.mtmrails.trustedserver.core.message.PasswordResult;
 import com.mtmrails.trustedserver.core.session.AccountView;
-import com.mtmrails.trustedserver.core.session.RebindReason;
 import com.mtmrails.trustedserver.core.session.PasswordChange;
 import com.mtmrails.trustedserver.core.session.RecoveryOrigin;
 import com.mtmrails.trustedserver.core.session.RecoveryResult;
@@ -172,10 +171,10 @@ class AccountServiceTest {
     @Test
     void rebindAuditsReason() {
         service.bindNew("steve", "Steve", key(1)).join();
-        service.rebind("steve", key(2), RebindReason.RECOVERY).join();
-        service.rebind("steve", key(3), RebindReason.ONLINE_MODE_IDENTITY).join();
+        assertTrue(service.rebindRecoveredKey("steve", key(1), key(2)).join());
+        service.rebindOnline("steve", key(3)).join();
         assertArrayEquals(key(3), account("steve").playerPub());
-        assertEquals(List.of("bind", "recover", "online_rebind"), events("steve"));
+        assertEquals(List.of("bind", "recovery_rebind", "online_rebind"), events("steve"));
     }
 
     @Test

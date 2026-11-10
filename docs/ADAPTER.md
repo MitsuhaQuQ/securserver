@@ -38,7 +38,7 @@
 | TOFU 记录 | `core-client` 新增 `KnownServers`（文件存储） |
 | 玩家密钥 | `PlayerKeyStore`（已实现） |
 | 密码输入 / 设定框、公钥变更确认 | 自定义 `Screen`，在客户端主线程弹出，结果以 future 交回状态机 |
-| `/passwd`、`/recoverypasswd` | 已在 Fabric API 客户端命令发送事件中用 `PasswordCommand` 拦截，经 `PlayPasswordClient` 加密发送；不会进入原版聊天或命令包 |
+| `/passwd`、`/recoverypasswd` | 已在 Fabric API 客户端命令发送事件中用 `PasswordCommand` 拦截，经 `PlayPasswordClient` 加密发送。找回密码可用于离线新设备改绑并保留、重设或清除登录密码。清除前需再次确认 |
 | 进服提示 | 进入游戏后在聊天栏显示 Finish 的 notices |
 | 导出 / 导入认证 | Mod Menu 设置界面中的按钮（`PlayerKeyBackup`） |
 
@@ -57,10 +57,9 @@
 
 | 推迟 | 第一阶段的处理 |
 |---|---|
-| 正式认证协议 | Ed25519 / TOFU / SQLite 玩家公钥绑定、登录密码弹框及游戏内 `/passwd` 加密通道已接入；找回密码完整启用、受限状态执行仍为后续阶段 |
+| 正式认证协议 | Ed25519 / TOFU / SQLite 玩家公钥绑定、登录及找回密码弹框、游戏内密码通道已接入。受限状态执行仍为后续阶段 |
 | 服务端公钥变更确认界面 | 默认拒绝并在断开界面说明 |
 | 受限 / OP 暂停 | 尚不执行游戏内权限限制；`/passwd` 已可安全设定密码并在账号存储中解除受限状态 |
-| 密码丢失恢复 | v3 核心编解码、SQLite 原子事务、`ResetGrant` 状态机及 Fabric“忘记密码 / 验证并重设 / 清除密码”界面已接入；`recoveryPassword` 默认仍关闭，待 `/recoverypasswd` 独立验收后启用 |
 | 隧道模式 | 强制关闭；配置为 optional / required 时打印警告 |
 | invalid session 回退 | 已纳入第一阶段：切换为离线 UUID 后必须通过 PSK；已声明的正版同名禁止回退 |
 | 导出 / 导入按钮 | 已通过可选 Mod Menu 设置入口接入：默认全选、分页选择、密码加密、明文风险确认、只读预检与显式冲突覆盖 |
@@ -72,13 +71,13 @@
   "validation": {
     "ed25519": true,
     "loginPassword": true,
-    "recoveryPassword": false,
+    "recoveryPassword": true,
     "newPlayerRestriction": false
   }
 }
 ```
 
-`loginPassword` 已完成 Fabric 登录界面和游戏阶段 `/passwd` 加密通道，因此默认开启。`recoveryPassword` 共用通道已接通但尚未完成独立功能验收；`newPlayerRestriction` 的游戏阶段执行也未完成，所以后二者暂不默认开启。依赖关系非法时配置加载直接失败。
+`loginPassword` 与 `recoveryPassword` 默认开启。现有配置显式指定的布尔值优先。`newPlayerRestriction` 的游戏阶段执行尚未完成，默认关闭。依赖关系非法时配置加载直接失败。
 
 `loginPassword=true` 表示“支持并验证已设置的登录密码”，不表示强制每个账号设置密码。未设置密码的账号只验证绑定的 Ed25519 玩家密钥；玩家可通过客户端导出/导入该密钥迁移电脑。只有主动使用 `/passwd` 设置后，后续登录才增加密码验证。
 

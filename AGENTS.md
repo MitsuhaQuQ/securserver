@@ -102,7 +102,7 @@ To avoid spam and auto exploit bots.
     - `normal`：保持现有兼容行为，清空玩家样本，人数按 `playerCount` 配置，保留原 MOTD、favicon 和版本显示
     - `enhanced` 且 `disablePing=false`：现代状态 Ping 返回通用 `enhancedMotd`、固定通用版本名称、空 favicon、空玩家样本，并在 `playerCount=real` 时显示 0 人；响应自动附加 ServerSeekerV2 的不可见退出标记。协议号保留以便客户端判断版本兼容性；旧版 Ping 直接关闭，避免旁路泄漏
     - `enhanced` 且 `disablePing=true`：现代和旧版 Ping 均直接断开、不回应，服务器列表会显示离线；直接登录与认证流程不受影响
-23. **分级附加验证**：`server.json` 的 `auth.validation` 为每一级提供独立布尔开关。当前默认开启已完成端到端接入的 `ed25519` 与 `loginPassword`；找回密码的设置入口和游戏内受限执行完成后再分别调整其默认值
+23. **分级附加验证**：`server.json` 的 `auth.validation` 为每一级提供独立布尔开关。当前默认开启 `ed25519`、`loginPassword` 和 `recoveryPassword`。游戏内受限执行完成后再调整 `newPlayerRestriction` 的默认值
     - `ed25519`：基础 PSK / 正版令牌通过后执行服务端身份签名、客户端 TOFU、玩家 `ClientProof` 和服务端公钥绑定。关闭时直接在基础门禁后放行
     - `loginPassword`：Ed25519 通过后执行登录密码 / 新用户设定密码流程；要求 `ed25519=true`
     - `recoveryPassword`：设备公钥不匹配时允许使用找回密码；要求 `ed25519=true`
@@ -130,7 +130,7 @@ To avoid spam and auto exploit bots.
 
 - Fabric 1.20.1 已接通游戏阶段 `/passwd {password} {confirmpassword}`：客户端本地拦截并通过登录阶段移交的独立加密密码通道发送，服务端完成规则校验、Argon2id 存储、审计和解除账号受限状态；密码不会进入原版命令包或聊天日志
 - 登录密码是可选附加验证：未设置密码的玩家不因此被拒绝，正常情况下只验证已绑定的 Ed25519 玩家密钥；换电脑时通过客户端密钥导出/导入迁移。只有玩家主动设置过登录密码后，后续登录才要求输入
-- `/recoverypasswd` 共用的加密传输基础已接通，但在启用对应验证配置前仍需完成其独立功能验收
+- `/recoverypasswd` 已通过独立加密密码通道接入，并用真实 SQLite / Argon2id 测试覆盖设定找回密码、拒绝复用登录密码、离线新设备找回及重设。新配置默认开启 `recoveryPassword`，显式配置为 `false` 的服务器继续关闭
 - 正式认证协议已升级到 v3：`PasswordAnswer` 使用显式 `SUBMIT / SKIP / REQUEST_RESET / CLEAR` 动作，`PasswordRequest` 增加 `RESET`；HKDF、签名和隧道 AAD 域标签同步为 `tsrv v3`，旧 v2 密码回答严格拒绝
 - SQLite 已实现恢复事务：以旧公钥比较并交换，在同一事务中完成设备改绑、登录密码保留 / 设置 / 清除、重设后的锁定清理和恢复审计；审计失败会回滚账号变更
 - `ResetGrant` 状态机与 Fabric 登录界面已接通：正版 session + 原绑定密钥可快速重设；offline / invalid-session 及正版新设备必须先验证找回密码。授权绑定当前会话、旧/新公钥和 transcript，60 秒失效；“设置新密码”与“明确清除密码”最终调用原子事务

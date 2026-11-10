@@ -22,6 +22,7 @@ final class PasswordPromptScreen extends Screen {
     private EditBox password;
     private EditBox confirm;
     private Component error;
+    private boolean confirmingClear;
     private boolean completed;
 
     PasswordPromptScreen(Screen parent, PasswordRequest request,
@@ -36,6 +37,15 @@ final class PasswordPromptScreen extends Screen {
     @Override
     protected void init() {
         int center = width / 2;
+        if (confirmingClear) {
+            int buttonY = height / 2 + 42;
+            addRenderableWidget(Button.builder(Component.literal("确认清除"),
+                    b -> finish(Optional.of(PasswordAnswer.clear()), true))
+                    .bounds(center - 105, buttonY, 100, 20).build());
+            addRenderableWidget(Button.builder(Component.literal("返回"), b -> showClearConfirmation(false))
+                    .bounds(center + 5, buttonY, 100, 20).build());
+            return;
+        }
         int firstY = hasConfirmation() ? height / 2 - 34 : height / 2 - 20;
         password = new EditBox(font, center - 150, firstY, 300, 20, Component.literal("密码"));
         password.setMaxLength(256);
@@ -86,9 +96,20 @@ final class PasswordPromptScreen extends Screen {
     }
 
     private void alternateAction() {
-        PasswordAnswer answer = request.kind() == PasswordRequest.Kind.SET
-                ? new PasswordAnswer("") : PasswordAnswer.clear();
-        finish(Optional.of(answer), true);
+        if (request.kind() == PasswordRequest.Kind.SET) {
+            finish(Optional.of(new PasswordAnswer("")), true);
+        } else {
+            showClearConfirmation(true);
+        }
+    }
+
+    private void showClearConfirmation(boolean showing) {
+        password.setValue("");
+        confirm.setValue("");
+        confirmingClear = showing;
+        error = null;
+        clearWidgets();
+        init();
     }
 
     private void requestReset() {
@@ -119,7 +140,7 @@ final class PasswordPromptScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == 257 || keyCode == 335) {
+        if (!confirmingClear && (keyCode == 257 || keyCode == 335)) {
             submit();
             return true;
         }
@@ -143,7 +164,8 @@ final class PasswordPromptScreen extends Screen {
         renderBackground(graphics);
         int remaining = (int) Math.max(0, (deadlineMillis - Util.getMillis() + 999) / 1000);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 88, 0xFFFFFF);
-        graphics.drawCenteredString(font, Component.literal(descriptionFor(request.kind())),
+        String description = confirmingClear ? "确认后将移除本账号的登录密码" : descriptionFor(request.kind());
+        graphics.drawCenteredString(font, Component.literal(description),
                 width / 2, height / 2 - 68, 0xA0A0A0);
         if (!hasConfirmation()) {
             graphics.drawCenteredString(font,
@@ -168,7 +190,7 @@ final class PasswordPromptScreen extends Screen {
     private static String descriptionFor(PasswordRequest.Kind kind) {
         return switch (kind) {
             case LOGIN -> "输入此服务器账号的登录密码";
-            case RECOVERY -> "输入找回密码以继续恢复账号或重设登录密码";
+            case RECOVERY -> "验证后可将认证绑定更新为这台电脑";
             case SET -> "新账号可现在设置密码，也可以跳过";
             case RESET -> "设置新密码，或明确选择清除登录密码";
         };
@@ -177,7 +199,7 @@ final class PasswordPromptScreen extends Screen {
     private static String submitLabel(PasswordRequest.Kind kind) {
         return switch (kind) {
             case LOGIN -> "登录";
-            case RECOVERY -> "验证并继续";
+            case RECOVERY -> "保留登录密码";
             case SET -> "设置密码";
             case RESET -> "重设密码";
         };

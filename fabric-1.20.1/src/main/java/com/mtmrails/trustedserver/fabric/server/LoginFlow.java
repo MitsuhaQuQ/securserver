@@ -8,6 +8,7 @@ import com.mtmrails.trustedserver.core.crypto.OnlineTokenWire;
 import com.mtmrails.trustedserver.core.message.Channel;
 import com.mtmrails.trustedserver.core.session.AuthOutcome;
 import com.mtmrails.trustedserver.core.session.Outbound;
+import com.mtmrails.trustedserver.core.session.RejectReason;
 import com.mtmrails.trustedserver.core.session.ServerAuthSession;
 import com.mtmrails.trustedserver.core.session.ServerStep;
 import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
@@ -32,6 +33,7 @@ import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.fabric.api.networking.v1.ServerLoginNetworking;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerLoginPacketListenerImpl;
@@ -380,8 +382,12 @@ public final class LoginFlow {
         }
         AuthOutcome outcome = ((ServerStep.Done) step).outcome();
         if (outcome instanceof AuthOutcome.Rejected rejected) {
+            Component message = rejected.trusted() && rejected.reason() == RejectReason.KEY_MISMATCH
+                    ? Component.literal("设备密钥与绑定不匹配或无法自助恢复。请使用原设备或导入认证备份，"
+                            + "也可使用已设置的找回密码，或联系管理员。")
+                    : runtime.rejection();
             rejectAuthentication("formal authentication " + rejected.reason().name().toLowerCase(Locale.ROOT),
-                    rejected.trusted());
+                    rejected.trusted(), message);
             return;
         }
         AuthOutcome.Accepted accepted = (AuthOutcome.Accepted) outcome;
@@ -448,6 +454,10 @@ public final class LoginFlow {
     }
 
     private void rejectAuthentication(String reason, boolean trusted) {
+        rejectAuthentication(reason, trusted, runtime.rejection());
+    }
+
+    private void rejectAuthentication(String reason, boolean trusted, Component message) {
         synchronized (lock) {
             if (done) {
                 return;
@@ -465,7 +475,7 @@ public final class LoginFlow {
         }
         reportGate(trusted);
         log(reason, trusted);
-        handler.disconnect(runtime.rejection());
+        handler.disconnect(message);
     }
 
     /** Fabric 的登录阶段断开事件。 */

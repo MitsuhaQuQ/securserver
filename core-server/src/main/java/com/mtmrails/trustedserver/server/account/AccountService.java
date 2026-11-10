@@ -4,7 +4,6 @@ import com.mtmrails.trustedserver.core.message.PasswordRequest;
 import com.mtmrails.trustedserver.core.message.PasswordResult;
 import com.mtmrails.trustedserver.core.session.AccountGateway;
 import com.mtmrails.trustedserver.core.session.AccountView;
-import com.mtmrails.trustedserver.core.session.RebindReason;
 import com.mtmrails.trustedserver.core.session.PasswordChange;
 import com.mtmrails.trustedserver.core.session.RecoveryOrigin;
 import com.mtmrails.trustedserver.core.session.RecoveryResult;
@@ -135,15 +134,20 @@ public final class AccountService implements AccountGateway, AutoCloseable {
     }
 
     @Override
-    public CompletableFuture<Void> rebind(String accountId, byte[] playerPub, RebindReason reason) {
+    public CompletableFuture<Void> rebindOnline(String accountId, byte[] playerPub) {
         return db(() -> {
             if (!store.setPlayerPub(accountId, playerPub)) {
                 throw new IllegalStateException("account " + accountId + " disappeared during rebind");
             }
-            store.audit(now(), accountId, reason == RebindReason.ONLINE_MODE_IDENTITY
-                    ? AuditEvent.ONLINE_REBIND : AuditEvent.RECOVER, null, null);
+            store.audit(now(), accountId, AuditEvent.ONLINE_REBIND, null, null);
             return null;
         });
+    }
+
+    @Override
+    public CompletableFuture<Boolean> rebindRecoveredKey(String accountId, byte[] expectedOldPub, byte[] newPub) {
+        return db(() -> store.recoverAccount(accountId, expectedOldPub, newPub,
+                SqliteStore.PasswordMutation.KEEP, null, now(), AuditEvent.RECOVERY_REBIND));
     }
 
     @Override

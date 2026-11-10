@@ -328,7 +328,7 @@ password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字�
 - 不采用 OPAQUE 一类的 PAKE（口令认证密钥交换）：服务端身份已固定，再加上 AEAD，足以防窃听和中间人，复杂度低很多
 - 判定流程：
   - LOGIN 正确：进入 Finish
-  - LOGIN + REQUEST_RESET：仅当本连接已通过 Mojang session 验证，且本次 `player_pub` 与请求开始时的原绑定公钥一致时，发 PasswordRequest(RESET)；否则拒绝该动作，但不泄漏额外账号信息
+  - LOGIN + REQUEST_RESET：本次 Mojang session 已验证且 `player_pub` 与原绑定公钥一致时，直接发 PasswordRequest(RESET)。其他连接须先验证找回密码，再发 RESET。找回密码功能关闭或账号未设置找回密码时拒绝
   - RECOVERY 正确：
     - SUBMIT 且已设登录密码：发 PasswordRequest(LOGIN)，登录密码通过后以比较并交换方式改绑
     - SUBMIT 且未设登录密码：以比较并交换方式改绑，然后进入 Finish
@@ -406,7 +406,7 @@ notices        : string × notice_count   客户端进服后要显示的提示�
   | 0x0B | S→C | PasswordResult | `status : u8`（0 OK、1 REJECTED、2 RATE_LIMITED、3 ERROR）、`message : string`（最多 1024 字节） |
 
 - 两次输入是否一致由客户端在本地校验，线上只携带最终密码
-- 客户端拦截规则：只要命令名是 `passwd` 或 `recoverypasswd`（不区分大小写），无论参数是否正确都在本地处理，绝不作为聊天命令发出；参数以单个空格分隔，因此密码不能包含空格
+- 客户端拦截规则：只要命令名是 `passwd` 或 `recoverypasswd`（不区分大小写），无论参数是否正确都在本地处理，并从原版聊天输入历史中排除。参数以单个空格分隔，因此密码不能包含空格
 - 同一玩家同时只能有一个请求在处理，每分钟最多 5 次；超出时返回 `PasswordResult(RATE_LIMITED)`。结果按请求顺序加密发送
 - 服务端在游戏阶段的密码通道上只接受 SetPassword / SetRecoveryPassword；解密失败、格式错误、重放或其他类型均按 4.3.3 踢出玩家，之后不再处理该通道的任何数据。设定登录密码成功即解除受限（6.1），设定找回密码不改变受限状态
 - 服务端依然注册这两个命令，但直接通过聊天执行时一律拒绝并提示，并且**不写入命令日志**

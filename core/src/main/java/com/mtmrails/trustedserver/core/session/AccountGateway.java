@@ -33,8 +33,11 @@ public interface AccountGateway {
      */
     CompletableFuture<Boolean> setLoginPassword(String accountId, String password);
 
-    /** 把账号改绑到新公钥（找回流程，或正版模式下的新设备）。 */
-    CompletableFuture<Void> rebind(String accountId, byte[] playerPub, RebindReason reason);
+    /** 把已通过正版 session 验证的账号改绑到新设备。 */
+    CompletableFuture<Void> rebindOnline(String accountId, byte[] playerPub);
+
+    /** 找回后保留原登录密码，仅当旧公钥仍匹配时改绑并记录审计。 */
+    CompletableFuture<Boolean> rebindRecoveredKey(String accountId, byte[] expectedOldPub, byte[] newPub);
 
     /**
      * 管理员清空绑定后的重新绑定：仅当账号当前没有绑定公钥时原子地写入。

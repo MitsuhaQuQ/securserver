@@ -116,14 +116,32 @@ final class InMemoryAccounts implements AccountGateway {
     }
 
     @Override
-    public CompletableFuture<Void> rebind(String accountId, byte[] playerPub, RebindReason reason) {
+    public CompletableFuture<Void> rebindOnline(String accountId, byte[] playerPub) {
         return async(() -> {
             accounts.get(accountId).playerPub = playerPub.clone();
             synchronized (rebinds) {
                 rebinds.add(accountId);
-                rebindReasons.add(reason);
+                rebindReasons.add(RebindReason.ONLINE_MODE_IDENTITY);
             }
             return null;
+        });
+    }
+
+    @Override
+    public CompletableFuture<Boolean> rebindRecoveredKey(String accountId, byte[] expectedOldPub, byte[] newPub) {
+        return async(() -> {
+            Account account = accounts.get(accountId);
+            synchronized (account) {
+                if (loseRecoveryRace || !java.util.Arrays.equals(account.playerPub, expectedOldPub)) {
+                    return false;
+                }
+                account.playerPub = newPub.clone();
+                synchronized (rebinds) {
+                    rebinds.add(accountId);
+                    rebindReasons.add(RebindReason.RECOVERY);
+                }
+                return true;
+            }
         });
     }
 

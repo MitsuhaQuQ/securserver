@@ -32,6 +32,7 @@ class ConfigLoaderTest {
         assertTrue(written.contains("\"tunnel\": \"optional\""));
         assertTrue(written.contains("\"ed25519\": true"));
         assertTrue(written.contains("\"loginPassword\": true"));
+        assertTrue(written.contains("\"recoveryPassword\": true"));
         assertTrue(written.contains("设定密码后解除新用户限制")); // 中文不被转义
 
         ConfigLoader.Result reloaded = ConfigLoader.loadOrCreate(file);
@@ -86,6 +87,20 @@ class ConfigLoaderTest {
         assertFalse(config.network().ipLockoutEnabled());
         assertEquals(RejectionText.Mode.CUSTOM, config.rejection().mode());
         assertFalse(config.auth().validation().loginPassword());
+        assertFalse(config.auth().validation().recoveryPassword());
+    }
+
+    @Test
+    void baseGateOnlyConfigCanOmitRecoverySwitch() throws Exception {
+        var config = ConfigLoader.parse("""
+                {"auth": {"tunnel": "disabled",
+                          "validation": {"ed25519": false, "loginPassword": false}}}
+                """).config();
+        assertFalse(config.auth().validation().recoveryPassword());
+        assertTrue(error("""
+                {"auth": {"tunnel": "disabled",
+                          "validation": {"ed25519": false, "loginPassword": false, "recoveryPassword": true}}}
+                """).contains("require auth.validation.ed25519"));
     }
 
     @Test

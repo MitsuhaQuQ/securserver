@@ -239,6 +239,16 @@ class AuthSessionTest {
     }
 
     @Test
+    void recoveryKeepingPasswordRejectsConcurrentRebind() {
+        byte[] original = otherKey();
+        accounts.put("steve", original, false, "pw", "rec");
+        accounts.loseRecoveryRace = true;
+        env.answer("rec", "pw");
+        assertEquals(RejectReason.ACCOUNT_CONFLICT, handshake().run().rejected().reason());
+        assertArrayEquals(original, accounts.accounts.get("steve").playerPub);
+    }
+
+    @Test
     void recoveryWithWrongLoginPasswordDoesNotRebind() {
         byte[] original = otherKey();
         accounts.put("steve", original, false, "pw", "rec");

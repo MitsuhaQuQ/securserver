@@ -92,12 +92,13 @@ public final class ConfigLoader {
         JsonSection notices = top.section("notices");
         ServerAuthConfig a = d.auth();
         ServerAuthConfig.ValidationLevels v = a.validation();
+        boolean ed25519 = validation.bool("ed25519", v.ed25519());
         return new ServerAuthConfig(
                 auth.enumValue("tunnel", a.tunnelPolicy(), ServerAuthConfig.TunnelPolicy.class),
                 new ServerAuthConfig.ValidationLevels(
-                        validation.bool("ed25519", v.ed25519()),
+                        ed25519,
                         validation.bool("loginPassword", v.loginPassword()),
-                        validation.bool("recoveryPassword", v.recoveryPassword()),
+                        validation.bool("recoveryPassword", ed25519 && v.recoveryPassword()),
                         validation.bool("newPlayerRestriction", v.newPlayerRestriction())),
                 auth.integer("maxPasswordAttempts", a.maxPasswordAttempts(), 1, 255),
                 auth.integer("passwordPromptTimeoutSeconds", a.passwordTimeoutSec(), 1, 65535),

@@ -86,8 +86,16 @@ final class ClientLoginHandler {
                 result.handover().close();
             }
         });
-        ClientPlayNetworking.registerGlobalReceiver(PASSWORD_CHANNEL,
-                (client, handler, buf, responseSender) -> onPasswordResult(client, handler.getConnection(), buf));
+        ClientPlayNetworking.registerGlobalReceiver(PASSWORD_CHANNEL, (client, handler, buf, responseSender) -> {
+            byte[] payload = new byte[buf.readableBytes()];
+            buf.readBytes(payload);
+            Connection connection = handler.getConnection();
+            client.execute(() -> {
+                if (client.getConnection() == handler) {
+                    onPasswordResult(connection, payload);
+                }
+            });
+        });
         ClientSendMessageEvents.ALLOW_COMMAND.register(this::interceptPasswordCommand);
     }
 
@@ -128,9 +136,7 @@ final class ClientLoginHandler {
         return false;
     }
 
-    private void onPasswordResult(Minecraft client, Connection connection, FriendlyByteBuf buf) {
-        byte[] payload = new byte[buf.readableBytes()];
-        buf.readBytes(payload);
+    private void onPasswordResult(Connection connection, byte[] payload) {
         PlayPasswordClient passwordClient = playPasswords.get(connection);
         if (passwordClient == null) {
             connection.disconnect(Component.literal("TrustedServer 密码通道状态异常"));
