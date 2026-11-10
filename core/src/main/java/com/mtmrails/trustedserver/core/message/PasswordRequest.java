@@ -13,7 +13,9 @@ public record PasswordRequest(Kind kind, int attemptsLeft, int timeoutSec) imple
         /** 输入找回密码，成功后改绑到当前设备的密钥。 */
         RECOVERY(2),
         /** 设定登录密码，可跳过。 */
-        SET(3);
+        SET(3),
+        /** 已取得一次性恢复授权后，设置或清除登录密码。 */
+        RESET(4);
 
         private final int id;
 
@@ -40,8 +42,8 @@ public record PasswordRequest(Kind kind, int attemptsLeft, int timeoutSec) imple
         if (attemptsLeft < 0 || attemptsLeft > 0xFF) {
             throw new IllegalArgumentException("attemptsLeft out of range: " + attemptsLeft);
         }
-        if (kind == Kind.SET && attemptsLeft != 0) {
-            throw new IllegalArgumentException("attemptsLeft must be 0 for SET");
+        if ((kind == Kind.SET || kind == Kind.RESET) && attemptsLeft != 0) {
+            throw new IllegalArgumentException("attemptsLeft must be 0 for " + kind);
         }
         if (timeoutSec < 1 || timeoutSec > 0xFFFF) {
             throw new IllegalArgumentException("timeoutSec out of range: " + timeoutSec);

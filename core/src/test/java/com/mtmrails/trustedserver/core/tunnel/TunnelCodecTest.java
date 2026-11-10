@@ -61,7 +61,7 @@ class TunnelCodecTest {
         assertEquals(1 + 21, wire.length);
         byte[] nonce = new byte[12];
         System.arraycopy(Direction.S2C.tag(), 0, nonce, 0, 4); // 第一帧序号为 0
-        byte[] aad = "tsrv v2 tunnel frame\u0015".getBytes(StandardCharsets.ISO_8859_1);
+        byte[] aad = "tsrv v3 tunnel frame\u0015".getBytes(StandardCharsets.ISO_8859_1);
         assertArrayEquals(plaintext, Aes256Gcm.decrypt(KEY, nonce, aad, Arrays.copyOfRange(wire, 1, wire.length)));
     }
 

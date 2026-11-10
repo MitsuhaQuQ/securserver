@@ -293,7 +293,8 @@ public final class ServerAuthSession {
 
     private ServerStep beginPassword(PasswordRequest.Kind kind) {
         pendingKind = kind;
-        attemptsLeft = kind == PasswordRequest.Kind.SET ? 0 : config.maxPasswordAttempts();
+        attemptsLeft = kind == PasswordRequest.Kind.SET || kind == PasswordRequest.Kind.RESET
+                ? 0 : config.maxPasswordAttempts();
         return sendPasswordRequest();
     }
 
@@ -317,6 +318,10 @@ public final class ServerAuthSession {
         String secret = answer.password();
         switch (pendingKind) {
             case SET:
+                if (answer.action() != PasswordAnswer.Action.SUBMIT
+                        && answer.action() != PasswordAnswer.Action.SKIP) {
+                    return done(RejectReason.PROTOCOL_ERROR);
+                }
                 if (answer.skipped()) {
                     return CompletableFuture.completedFuture(finish());
                 }
@@ -330,20 +335,21 @@ public final class ServerAuthSession {
                     return setRejections >= config.maxPasswordAttempts() ? finish() : sendPasswordRequest();
                 });
             case LOGIN:
-                if (answer.skipped()) {
-                    return passwordFailed();
+                if (answer.action() != PasswordAnswer.Action.SUBMIT) {
+                    return done(RejectReason.PROTOCOL_ERROR);
                 }
                 return accounts.verifyLoginPassword(accountId, secret)
                         .thenCompose(ok -> ok ? loginSucceeded() : passwordFailed());
             case RECOVERY:
-                if (answer.skipped()) {
-                    return passwordFailed();
+                if (answer.action() != PasswordAnswer.Action.SUBMIT) {
+                    return done(RejectReason.PROTOCOL_ERROR);
                 }
                 return accounts.verifyRecoveryPassword(accountId, secret)
                         .thenCompose(ok -> ok ? identityVerified(RebindReason.RECOVERY) : passwordFailed());
-            default:
-                throw new IllegalStateException("unreachable");
+            case RESET:
+                return done(RejectReason.PROTOCOL_ERROR); // 下一阶段接入 ResetGrant 与存储事务
         }
+        throw new IllegalStateException("unreachable password kind: " + pendingKind);
     }
 
     /**

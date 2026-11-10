@@ -47,7 +47,7 @@ com.mtmrails.trustedserver.core
 ├── crypto/
 │   ├── X25519                       临时密钥对、DH；u 坐标按 RFC 7748 清最高位并模 p 约简，拒绝全零结果
 │   ├── Ed25519                      普通 Ed25519；32 字节原始公钥 / 64 字节签名；拒绝非规范点编码与 S ≥ L
-│   ├── HandshakeSignatures          Challenge / ClientProof 的签名与验签（"tsrv v2 server|client" || transcript_0）
+│   ├── HandshakeSignatures          Challenge / ClientProof 的签名与验签（"tsrv v3 server|client" || transcript_0）
 │   ├── Hkdf                         RFC 5869，基于 HmacSHA256
 │   ├── Transcript                   transcript_0 的计算；先严格解析两条 Hello，online_mode 取自 ServerHello
 │   ├── SessionKeys                  按 PROTOCOL.md 4.3 派生六把密钥（auth / tunnel / password × 两个方向）；接管并清零共享秘密
@@ -149,7 +149,7 @@ body    = VarInt 条数（1–4096） | 条数 × (服务端身份公钥 32 | �
 
 ### 4.1 简易预共享密钥验证
 
-`PresharedKeyHandshake` 提供基础登录门禁，不属于正式协议 v2。验证成功后由 `auth.validation.ed25519` 决定继续正式 `ServerAuthSession`，或直接进入原版登录。PSK 必须是 32 字节高熵随机值，不把人类口令直接当作 PSK。
+`PresharedKeyHandshake` 提供基础登录门禁，不属于正式协议 v3。验证成功后由 `auth.validation.ed25519` 决定继续正式 `ServerAuthSession`，或直接进入原版登录。PSK 必须是 32 字节高熵随机值，不把人类口令直接当作 PSK。
 
 1. 服务端生成 32 字节 `server_nonce`。
 2. 客户端生成 32 字节 `client_nonce`，双方以 `server_nonce || client_nonce` 为 salt，对 PSK 做 HKDF-Extract。

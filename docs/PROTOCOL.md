@@ -1,6 +1,6 @@
 # TrustedServer 认证协议设计
 
-> 协议版本：`2`（草案）
+> 协议版本：`3`（草案）
 > 需求与决策见 [AGENTS.md](../AGENTS.md)。本文只描述线上协议、密码学与状态机。
 
 当前协议按威胁模型 A 定义。威胁模型 B 仅作预留，规则暂未定义；不据此增加强制设密、禁止跳过或其他认证分支。现有登录密码、找回密码及 OP 必须设密规则仍按本文与 AGENTS.md 执行。
@@ -221,12 +221,12 @@ want_tunnel    : bool       客户端配置希望开启隧道
 transcript_0 = SHA-256( server_hello_payload || client_hello_payload || username_field || online_mode_flag )
 shared       = X25519(eph_priv, peer_eph_pub)        全零结果视为失败并断开
 prk          = HKDF-Extract(salt = server_nonce || client_nonce, ikm = shared)
-k_s2c        = HKDF-Expand(prk, "tsrv v2 auth s2c" || transcript_0, 32)
-k_c2s        = HKDF-Expand(prk, "tsrv v2 auth c2s" || transcript_0, 32)
-k_tun_s2c    = HKDF-Expand(prk, "tsrv v2 tunnel s2c" || transcript_0, 32)
-k_tun_c2s    = HKDF-Expand(prk, "tsrv v2 tunnel c2s" || transcript_0, 32)
-k_pw_s2c     = HKDF-Expand(prk, "tsrv v2 password s2c" || transcript_0, 32)
-k_pw_c2s     = HKDF-Expand(prk, "tsrv v2 password c2s" || transcript_0, 32)
+k_s2c        = HKDF-Expand(prk, "tsrv v3 auth s2c" || transcript_0, 32)
+k_c2s        = HKDF-Expand(prk, "tsrv v3 auth c2s" || transcript_0, 32)
+k_tun_s2c    = HKDF-Expand(prk, "tsrv v3 tunnel s2c" || transcript_0, 32)
+k_tun_c2s    = HKDF-Expand(prk, "tsrv v3 tunnel c2s" || transcript_0, 32)
+k_pw_s2c     = HKDF-Expand(prk, "tsrv v3 password s2c" || transcript_0, 32)
+k_pw_c2s     = HKDF-Expand(prk, "tsrv v3 password c2s" || transcript_0, 32)
 ```
 
 #### 4.3.1 transcript 与派生输入
@@ -269,7 +269,7 @@ payload   = header || ciphertext_and_tag
 
 ```
 server_id_pub  : 32 bytes   服务端 Ed25519 身份公钥
-server_sig     : 64 bytes   Sign(server_id, "tsrv v2 server" || transcript_0)
+server_sig     : 64 bytes   Sign(server_id, "tsrv v3 server" || transcript_0)
 ```
 
 客户端先验证签名，再用 TOFU 记录核对 `server_id_pub`；首次记录只能在签名通过后写入，已有记录变化必须经过明确确认。通过服务端身份检查后，才以它为索引找到（或新生成）玩家密钥并发送 ClientProof；此前不显示密码输入请求、不发送任何密码。
@@ -278,7 +278,7 @@ server_sig     : 64 bytes   Sign(server_id, "tsrv v2 server" || transcript_0)
 
 ```
 player_pub     : 32 bytes
-player_sig     : 64 bytes   Sign(player_key, "tsrv v2 client" || transcript_0)
+player_sig     : 64 bytes   Sign(player_key, "tsrv v3 client" || transcript_0)
 ```
 
 ### 4.6 服务端判定
@@ -304,7 +304,7 @@ player_sig     : 64 bytes   Sign(player_key, "tsrv v2 client" || transcript_0)
 
 ```
 kind           : u8   1 = LOGIN, 2 = RECOVERY, 3 = SET, 4 = RESET
-attempts_left  : u8   SET 时无意义，固定为 0
+attempts_left  : u8   SET / RESET 时无意义，固定为 0
 timeout_sec    : u16
 ```
 
@@ -340,7 +340,7 @@ password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字�
   - SET + SKIP：保持受限，进入 Finish
   - LOGIN / RECOVERY 错误：失败计数加 1，`attempts_left > 0` 时重发请求，否则锁定并断开
 
-`action` 字段、RESET kind 与恢复事务是下一阶段的协议扩展；实现时必须同步提升核心协议版本，旧客户端不得把带 action 的消息按旧 PasswordAnswer 解码。
+`action` 字段与 RESET kind 自协议 v3 起启用；旧客户端不得把带 action 的消息按旧 PasswordAnswer 解码。恢复事务在后续实现阶段接入。
 
 ### 4.8.1 一次性密码重设授权
 
@@ -377,7 +377,7 @@ notices        : string × notice_count   客户端进服后要显示的提示�
 
   ```
   length_bytes = 最短 VarInt(L)
-  aad          = ASCII("tsrv v2 tunnel frame") || length_bytes
+  aad          = ASCII("tsrv v3 tunnel frame") || length_bytes
   frame        = length_bytes || AES-256-GCM(k_tun_dir, nonce, plaintext, aad)
   ```
 
@@ -485,7 +485,8 @@ CREATE INDEX audit_log_ts ON audit_log (ts);
 
 ## 10. 协议版本规则（关键版本机制）
 
-- 草案 v2：ServerHello 新增 `online_mode` 字段；与旧 v1 格式不兼容，当前实现只支持 v2。密钥派生和签名的域标签同步使用 `tsrv v2`。
+- 草案 v2：ServerHello 新增 `online_mode` 字段；与旧 v1 格式不兼容。
+- 草案 v3：PasswordAnswer 增加显式 action，PasswordRequest 增加 RESET；密钥派生、签名与隧道 AAD 域标签同步升级为 `tsrv v3`。当前实现只支持 v3。
 
 - 协议版本号（u16）**只在**线上格式、密码学或状态机发生变化时加 1，与 mod 版本号无关
 - mod 的小版本没有改动核心验证部分时，协议版本不变，新旧客户端和服务端可以互相连接

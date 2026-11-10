@@ -46,30 +46,30 @@ class SessionCryptoTest {
 
     @Test
     void knownAnswerVector() throws Exception {
-        assertEquals("54535256010200028520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+        assertEquals("54535256010200038520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
                 + "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000000100",
                 s(fixture.serverHelloPayload));
-        assertEquals("54535256020002de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
+        assertEquals("54535256020003de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
                 + "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f00",
                 s(fixture.clientHelloPayload));
         assertEquals("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742", s(fixture.sharedSecret));
-        assertEquals("60861b9ddfa406e2eded9a9937ac40c9540425c346e659460ed573d16a7ca051", s(fixture.transcript));
+        assertEquals("bae79106630df10e016e69884fa4da909669bd371740cca20267df0d09552d42", s(fixture.transcript));
 
-        assertKey("b909edfb8176c7e6f0b3fb211108e4e38bd4872b4498a8d480e4830e642d0416", SessionKeys.Purpose.AUTH, Direction.S2C);
-        assertKey("8a675b6a58c36212f6e616edbb680a0f0adda6c5daade9172f372fa5759cff27", SessionKeys.Purpose.AUTH, Direction.C2S);
-        assertKey("836a89fa9d7d3c8d13bdfe2c5d57d22d68caaeee71361870bfaebb933c896365", SessionKeys.Purpose.TUNNEL, Direction.S2C);
-        assertKey("49f72060b7fe29218405c2230915372457bda2a4f90f5fa70d4d674a8a89671b", SessionKeys.Purpose.TUNNEL, Direction.C2S);
-        assertKey("fad5dcc83aa52e6c08fec5239239e1ba9ebc4ed6e94e023d03ead19f773b166c", SessionKeys.Purpose.PASSWORD, Direction.S2C);
-        assertKey("f0cee3b3473bcf3c783581c9d7d6b0f334fec095abbe04eab357eda6edcfd84c", SessionKeys.Purpose.PASSWORD, Direction.C2S);
+        assertKey("07ad7d79cd7e0ae34cc46fd559fc457114cccc48bb4c46fac7ac692976fdd3fb", SessionKeys.Purpose.AUTH, Direction.S2C);
+        assertKey("0d6e4ca76c1ecf1a30fd4c9b9613aae2c091cd837963bac3ab6de07ddfbbd0d1", SessionKeys.Purpose.AUTH, Direction.C2S);
+        assertKey("dc8f4729cfc2031d1b6adde26c26a315e8a339c0296e58f952f16562871b8312", SessionKeys.Purpose.TUNNEL, Direction.S2C);
+        assertKey("59a90acf01b37dab99c41815b523c54a89d5f4265039ab220d15236d295d74d4", SessionKeys.Purpose.TUNNEL, Direction.C2S);
+        assertKey("8baab284565ff64f5c10ebb61e56fbc0f8c167ad442f091f087a74e431b89023", SessionKeys.Purpose.PASSWORD, Direction.S2C);
+        assertKey("0bd9d1792ecfcafaf50f62911ee743191e7bad082108dbeb8bd233358b3ad802", SessionKeys.Purpose.PASSWORD, Direction.C2S);
 
         Ed25519.KeyPairData identity = Ed25519.fromSeed(KatFixture.SERVER_ID_SEED, KatFixture.SERVER_ID_PUB);
         byte[] signature = HandshakeSignatures.signServer(identity, fixture.transcript);
-        assertEquals("4f5c0417fb538505de0768a83add89f1575c40c8bdc97d674a57824bb2555731"
-                + "41dc0b56a1fd143577c5f9d22b65756896d1ad7cc6f96e551cabeab0969f850f", s(signature));
+        assertEquals("594403ccd4c93c589220f8377090a29090c545debcd9bf27cb65a9231124a0d98"
+                + "ba35fb71fe93cb69a0c360c6a9f67b8a1abeaf141ef731383f292c58120f00d", s(signature));
 
-        String challengePayload = "5453525603e3648cffe97279f8e926f2889bb9c5f23f563400a1a3a301da7e6e24c2fb76024fe67b"
-                + "877c55ad0c9ffc54b9ff3a162ff7f3353b6b451d5f9a267e38e0881fa7647eab8fc6f6d098e650582dd36d"
-                + "a217ea25b184866114381fadac0598cef74fa6a50e4c56c067544f1ac7a1fd99e4d0";
+        String challengePayload = "5453525603d0e282be6e46a69a1a901092b47cfd76955a1a6954c7c6de7b8bf79528cfaccf1146fced81053"
+                + "2086c7f97760c92198faa7f97ee90f9deb09c0f6a44cd33c3a32e44aba9a1ab74b904e6743f84c33038ba78"
+                + "867d11e6e6636de0fce49bc1c5d13c818ec21d85528fc241da2920a0f0ed";
         byte[] sealed = serverKeys.authChannel(Side.SERVER).seal(new Challenge(KatFixture.SERVER_ID_PUB, signature));
         assertEquals(challengePayload, s(sealed));
 
@@ -83,9 +83,9 @@ class SessionCryptoTest {
 
     @Test
     void labelsAreExactAscii() {
-        assertEquals("tsrv v2 auth s2c", SessionKeys.label(SessionKeys.Purpose.AUTH, Direction.S2C));
-        assertEquals("tsrv v2 password c2s", SessionKeys.label(SessionKeys.Purpose.PASSWORD, Direction.C2S));
-        assertEquals("tsrv v2 tunnel s2c", SessionKeys.label(SessionKeys.Purpose.TUNNEL, Direction.S2C));
+        assertEquals("tsrv v3 auth s2c", SessionKeys.label(SessionKeys.Purpose.AUTH, Direction.S2C));
+        assertEquals("tsrv v3 password c2s", SessionKeys.label(SessionKeys.Purpose.PASSWORD, Direction.C2S));
+        assertEquals("tsrv v3 tunnel s2c", SessionKeys.label(SessionKeys.Purpose.TUNNEL, Direction.S2C));
         assertArrayEquals(h("53324300"), Direction.S2C.tag());
         assertArrayEquals(h("43325300"), Direction.C2S.tag());
     }

@@ -36,8 +36,11 @@ class MessageCodecTest {
                 new PasswordRequest(PasswordRequest.Kind.LOGIN, 3, 90),
                 new PasswordRequest(PasswordRequest.Kind.RECOVERY, 1, 60),
                 new PasswordRequest(PasswordRequest.Kind.SET, 0, 120),
+                new PasswordRequest(PasswordRequest.Kind.RESET, 0, 60),
                 new PasswordAnswer("hunter2"),
                 new PasswordAnswer(""),
+                PasswordAnswer.requestReset(),
+                PasswordAnswer.clear(),
                 new Finish(true, List.of("尚未设置找回密码", "notice 2")),
                 new Finish(false, List.of()),
                 new FinishAck(),
@@ -198,11 +201,27 @@ class MessageCodecTest {
                 () -> new ServerHello(new int[] {0}, filled(32, 0), filled(32, 0), 0, false));
         assertThrows(IllegalArgumentException.class, () -> new Challenge(filled(31, 0), filled(64, 0)));
         assertThrows(IllegalArgumentException.class, () -> new PasswordRequest(PasswordRequest.Kind.SET, 1, 60));
+        assertThrows(IllegalArgumentException.class, () -> new PasswordRequest(PasswordRequest.Kind.RESET, 1, 60));
         assertThrows(IllegalArgumentException.class, () -> new PasswordRequest(PasswordRequest.Kind.LOGIN, 3, 0));
         assertThrows(IllegalArgumentException.class, () -> new SetPassword(""));
         assertThrows(IllegalArgumentException.class, () -> new SetRecoveryPassword(""));
         assertTrue(new PasswordAnswer("").skipped());
         assertFalse(new PasswordAnswer("x").skipped());
+        assertThrows(IllegalArgumentException.class,
+                () -> new PasswordAnswer(PasswordAnswer.Action.SUBMIT, ""));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PasswordAnswer(PasswordAnswer.Action.CLEAR, "secret"));
+    }
+
+    @Test
+    void versionTwoPasswordAnswersAreRejected() {
+        // v2 body was only a VarInt-length-prefixed string: empty and "x" respectively.
+        assertThrows(MalformedMessageException.class,
+                () -> MessageCodec.decodeBody(MessageType.PASSWORD_ANSWER, new byte[] {0}));
+        assertThrows(MalformedMessageException.class,
+                () -> MessageCodec.decodeBody(MessageType.PASSWORD_ANSWER, new byte[] {1, 'x'}));
+        assertThrows(MalformedMessageException.class,
+                () -> MessageCodec.decodeBody(MessageType.PASSWORD_ANSWER, new byte[] {4, 0}));
     }
 
     @Test

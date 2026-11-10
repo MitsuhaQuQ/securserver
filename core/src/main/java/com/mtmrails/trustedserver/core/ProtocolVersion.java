@@ -7,7 +7,7 @@ package com.mtmrails.trustedserver.core;
  */
 public final class ProtocolVersion {
     /** 当前协议版本。 */
-    public static final int CURRENT = 2;
+    public static final int CURRENT = 3;
 
     /** 本实现支持的全部协议版本。 */
     private static final int[] SUPPORTED = {CURRENT};

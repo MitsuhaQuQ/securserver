@@ -210,11 +210,13 @@ public final class ClientAuthSession {
         }
         return environment.promptPassword(request).thenApply(entered -> {
             String secret = entered.orElse("");
-            if (secret.isEmpty() && request.kind() != PasswordRequest.Kind.SET) {
+            if (entered.isEmpty() && request.kind() != PasswordRequest.Kind.SET) {
                 return failNow(ClientFailure.Kind.USER_CANCELLED, "password entry cancelled");
             }
             try {
-                return new ClientStep.Reply(password.seal(new PasswordAnswer(secret)));
+                PasswordAnswer answer = request.kind() == PasswordRequest.Kind.RESET && secret.isEmpty()
+                        ? PasswordAnswer.clear() : new PasswordAnswer(secret);
+                return new ClientStep.Reply(password.seal(answer));
             } catch (IllegalArgumentException e) {
                 return failNow(ClientFailure.Kind.INTERNAL_ERROR, "password rejected locally: " + e.getMessage());
             } catch (CryptoException e) {

@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * 一次连接的六把会话密钥（PROTOCOL.md 4.3）：
- * {@code k = HKDF-Expand(HKDF-Extract(server_nonce || client_nonce, shared), "tsrv v2 <用途> <方向>" || transcript_0, 32)}。
+ * {@code k = HKDF-Expand(HKDF-Extract(server_nonce || client_nonce, shared), "tsrv v3 <用途> <方向>" || transcript_0, 32)}。
  */
 public final class SessionKeys {
     public enum Purpose {
@@ -22,7 +22,7 @@ public final class SessionKeys {
         }
     }
 
-    static final String LABEL_PREFIX = "tsrv v2 ";
+    static final String LABEL_PREFIX = "tsrv v3 ";
 
     private final Map<Purpose, Map<Direction, byte[]>> keys = new EnumMap<>(Purpose.class);
     private boolean destroyed;

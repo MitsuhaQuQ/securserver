@@ -12,7 +12,7 @@ import java.util.Objects;
  *
  * <pre>
  * length_bytes = 最短 VarInt(L)，L = 明文长度 + 16
- * frame        = length_bytes || AES-256-GCM(k_tun, nonce, plaintext, aad = "tsrv v2 tunnel frame" || length_bytes)
+ * frame        = length_bytes || AES-256-GCM(k_tun, nonce, plaintext, aad = "tsrv v3 tunnel frame" || length_bytes)
  * </pre>
  *
  * <p>不发送空帧。任何失败后本编码器永久失效，上层应关闭连接。非线程安全。

@@ -11,7 +11,7 @@ final class TunnelFrames {
     static final int MAX_L = MAX_PLAINTEXT + TAG_LENGTH;
     /** 长度前缀最多 3 字节（65552 < 2^21）。 */
     static final int MAX_LENGTH_BYTES = 3;
-    static final byte[] AAD_PREFIX = "tsrv v2 tunnel frame".getBytes(StandardCharsets.US_ASCII);
+    static final byte[] AAD_PREFIX = "tsrv v3 tunnel frame".getBytes(StandardCharsets.US_ASCII);
 
     private TunnelFrames() {
     }

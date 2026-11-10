@@ -30,4 +30,10 @@ class ProtocolVersionTest {
         ProtocolVersion.supported()[0] = -1;
         assertTrue(ProtocolVersion.isSupported(ProtocolVersion.CURRENT));
     }
+
+    @Test
+    void recoveryActionsRequireVersionThree() {
+        assertEquals(3, ProtocolVersion.CURRENT);
+        assertFalse(ProtocolVersion.isSupported(2));
+    }
 }

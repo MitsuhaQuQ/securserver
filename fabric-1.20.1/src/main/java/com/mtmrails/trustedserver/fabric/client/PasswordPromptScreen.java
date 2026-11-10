@@ -35,12 +35,12 @@ final class PasswordPromptScreen extends Screen {
     @Override
     protected void init() {
         int center = width / 2;
-        int firstY = request.kind() == PasswordRequest.Kind.SET ? height / 2 - 34 : height / 2 - 20;
+        int firstY = hasConfirmation() ? height / 2 - 34 : height / 2 - 20;
         password = new EditBox(font, center - 150, firstY, 300, 20, Component.literal("密码"));
         password.setMaxLength(256);
         mask(password);
         addRenderableWidget(password);
-        if (request.kind() == PasswordRequest.Kind.SET) {
+        if (hasConfirmation()) {
             confirm = new EditBox(font, center - 150, firstY + 28, 300, 20, Component.literal("确认密码"));
             confirm.setMaxLength(256);
             mask(confirm);
@@ -50,12 +50,13 @@ final class PasswordPromptScreen extends Screen {
         int buttonY = height / 2 + 42;
         addRenderableWidget(Button.builder(Component.literal(submitLabel(request.kind())), b -> submit())
                 .bounds(center - 150, buttonY, 95, 20).build());
-        if (request.kind() == PasswordRequest.Kind.SET) {
-            addRenderableWidget(Button.builder(Component.literal("跳过"), b -> finish(Optional.empty(), true))
+        if (hasConfirmation()) {
+            String alternate = request.kind() == PasswordRequest.Kind.SET ? "跳过" : "清除密码";
+            addRenderableWidget(Button.builder(Component.literal(alternate), b -> finish(Optional.of(""), true))
                     .bounds(center - 48, buttonY, 95, 20).build());
         }
         addRenderableWidget(Button.builder(Component.literal("取消"), b -> onClose())
-                .bounds(request.kind() == PasswordRequest.Kind.SET ? center + 54 : center + 5,
+                .bounds(hasConfirmation() ? center + 54 : center + 5,
                         buttonY, 95, 20).build());
         setInitialFocus(password);
     }
@@ -71,7 +72,7 @@ final class PasswordPromptScreen extends Screen {
             error = Component.literal("密码不能为空");
             return;
         }
-        if (request.kind() == PasswordRequest.Kind.SET && !secret.equals(confirm.getValue())) {
+        if (hasConfirmation() && !secret.equals(confirm.getValue())) {
             error = Component.literal("两次输入的密码不一致");
             return;
         }
@@ -123,13 +124,13 @@ final class PasswordPromptScreen extends Screen {
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 88, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.literal(descriptionFor(request.kind())),
                 width / 2, height / 2 - 68, 0xA0A0A0);
-        if (request.kind() != PasswordRequest.Kind.SET) {
+        if (!hasConfirmation()) {
             graphics.drawCenteredString(font,
                     Component.literal("剩余尝试次数：" + request.attemptsLeft()),
                     width / 2, height / 2 - 50, 0xFFFF55);
         }
         graphics.drawString(font, "剩余时间：" + remaining + " 秒", width / 2 - 150,
-                request.kind() == PasswordRequest.Kind.SET ? height / 2 - 50 : height / 2 - 36, 0xA0A0A0);
+                hasConfirmation() ? height / 2 - 50 : height / 2 - 36, 0xA0A0A0);
         if (error != null) graphics.drawCenteredString(font, error, width / 2, height / 2 + 20, 0xFF5555);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
@@ -139,6 +140,7 @@ final class PasswordPromptScreen extends Screen {
             case LOGIN -> "TrustedServer 登录密码";
             case RECOVERY -> "TrustedServer 找回认证";
             case SET -> "设置 TrustedServer 登录密码";
+            case RESET -> "重设 TrustedServer 登录密码";
         };
     }
 
@@ -147,6 +149,7 @@ final class PasswordPromptScreen extends Screen {
             case LOGIN -> "输入此服务器账号的登录密码";
             case RECOVERY -> "设备密钥不匹配；输入找回密码以重新绑定这台设备";
             case SET -> "新账号可现在设置密码，也可以跳过";
+            case RESET -> "设置新密码，或明确选择清除登录密码";
         };
     }
 
@@ -155,6 +158,11 @@ final class PasswordPromptScreen extends Screen {
             case LOGIN -> "登录";
             case RECOVERY -> "找回并改绑";
             case SET -> "设置密码";
+            case RESET -> "重设密码";
         };
+    }
+
+    private boolean hasConfirmation() {
+        return request.kind() == PasswordRequest.Kind.SET || request.kind() == PasswordRequest.Kind.RESET;
     }
 }

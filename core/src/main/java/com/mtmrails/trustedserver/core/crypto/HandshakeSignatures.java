@@ -5,8 +5,8 @@ package com.mtmrails.trustedserver.core.crypto;
  * 对 ASCII 标签直接拼接 32 字节 transcript_0 做普通 Ed25519 签名，不做预哈希。
  */
 public final class HandshakeSignatures {
-    static final String SERVER_LABEL = "tsrv v2 server";
-    static final String CLIENT_LABEL = "tsrv v2 client";
+    static final String SERVER_LABEL = "tsrv v3 server";
+    static final String CLIENT_LABEL = "tsrv v3 client";
 
     private HandshakeSignatures() {
     }
