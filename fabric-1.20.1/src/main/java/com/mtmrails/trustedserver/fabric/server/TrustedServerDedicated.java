@@ -1,5 +1,7 @@
 package com.mtmrails.trustedserver.fabric.server;
 
+import com.mtmrails.trustedserver.core.crypto.PskWire;
+import com.mtmrails.trustedserver.core.crypto.OnlineTokenWire;
 import com.mtmrails.trustedserver.core.message.Channel;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -33,13 +35,29 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
             }
             flow.start(sender, synchronizer);
         });
+        ServerLoginNetworking.registerGlobalReceiver(new ResourceLocation(PskWire.CHANNEL),
+                (server, handler, understood, buf, synchronizer, responseSender) -> {
+                    TrustedServerRuntime runtime = TrustedServerRuntime.get();
+                    LoginFlow flow = runtime == null ? null : runtime.flows.get(handler);
+                    if (flow != null) {
+                        flow.onPskAnswer(understood, buf);
+                    }
+                });
+        ServerLoginNetworking.registerGlobalReceiver(new ResourceLocation(OnlineTokenWire.CHANNEL),
+                (server, handler, understood, buf, synchronizer, responseSender) -> {
+                    TrustedServerRuntime runtime = TrustedServerRuntime.get();
+                    LoginFlow flow = runtime == null ? null : runtime.flows.get(handler);
+                    if (flow != null) {
+                        flow.onOnlineTokenAnswer(understood, buf);
+                    }
+                });
         for (Channel channel : Channel.values()) {
             ServerLoginNetworking.registerGlobalReceiver(new ResourceLocation(channel.id()),
                     (server, handler, understood, buf, synchronizer, responseSender) -> {
                         TrustedServerRuntime runtime = TrustedServerRuntime.get();
                         LoginFlow flow = runtime == null ? null : runtime.flows.get(handler);
                         if (flow != null) {
-                            flow.onAnswer(channel, understood, buf);
+                            flow.onFormalAnswer(channel, understood, buf);
                         }
                     });
         }

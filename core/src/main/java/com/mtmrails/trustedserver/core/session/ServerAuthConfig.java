@@ -17,8 +17,27 @@ import java.util.Objects;
  * @param recoveryReminderNotice 未设找回密码的玩家进服时的提示，空串表示不提示
  * @param rebindNotice 本次登录把账号改绑到当前设备密钥时的提示（找回或正版新设备），空串表示不提示
  */
-public record ServerAuthConfig(TunnelPolicy tunnelPolicy, int maxPasswordAttempts, int passwordTimeoutSec,
+public record ServerAuthConfig(TunnelPolicy tunnelPolicy, ValidationLevels validation,
+        int maxPasswordAttempts, int passwordTimeoutSec,
         String restrictedNotice, String recoveryReminderNotice, String rebindNotice) {
+
+    /** 逐级附加验证开关；关闭上一层时不得开启依赖它的层。 */
+    public record ValidationLevels(boolean ed25519, boolean loginPassword,
+            boolean recoveryPassword, boolean newPlayerRestriction) {
+        public static final ValidationLevels DEFAULT = new ValidationLevels(true, false, false, false);
+        public static final ValidationLevels ALL = new ValidationLevels(true, true, true, true);
+
+        public ValidationLevels {
+            if (!ed25519 && (loginPassword || recoveryPassword || newPlayerRestriction)) {
+                throw new IllegalArgumentException("loginPassword, recoveryPassword and newPlayerRestriction "
+                        + "require auth.validation.ed25519=true");
+            }
+            if (newPlayerRestriction && !loginPassword) {
+                throw new IllegalArgumentException(
+                        "newPlayerRestriction requires auth.validation.loginPassword=true");
+            }
+        }
+    }
 
     public enum TunnelPolicy {
         /** 不提供隧道。 */
@@ -31,6 +50,10 @@ public record ServerAuthConfig(TunnelPolicy tunnelPolicy, int maxPasswordAttempt
 
     public ServerAuthConfig {
         Objects.requireNonNull(tunnelPolicy, "tunnelPolicy");
+        Objects.requireNonNull(validation, "validation");
+        if (!validation.ed25519() && tunnelPolicy != TunnelPolicy.DISABLED) {
+            throw new IllegalArgumentException("tunnel requires auth.validation.ed25519=true");
+        }
         if (maxPasswordAttempts < 1 || maxPasswordAttempts > 0xFF) {
             throw new IllegalArgumentException("maxPasswordAttempts must be 1..255");
         }
@@ -48,11 +71,26 @@ public record ServerAuthConfig(TunnelPolicy tunnelPolicy, int maxPasswordAttempt
         }
     }
 
+    /** 保留核心层旧调用点的简写；默认启用全部验证层。 */
+    public ServerAuthConfig(TunnelPolicy tunnelPolicy, int maxPasswordAttempts, int passwordTimeoutSec,
+            String restrictedNotice, String recoveryReminderNotice, String rebindNotice) {
+        this(tunnelPolicy, ValidationLevels.ALL, maxPasswordAttempts, passwordTimeoutSec,
+                restrictedNotice, recoveryReminderNotice, rebindNotice);
+    }
+
     public static ServerAuthConfig defaults() {
-        return new ServerAuthConfig(TunnelPolicy.OPTIONAL, 3, 60,
+        return new ServerAuthConfig(TunnelPolicy.OPTIONAL, ValidationLevels.DEFAULT, 3, 60,
                 "设定密码后解除新用户限制（使用 /passwd）",
                 "尚未设置找回密码，可使用 /recoverypasswd 设置",
                 "检测到新设备，已把本服务器的认证绑定更新为这台电脑");
+    }
+
+    /** 完整状态机测试及未来全部功能上线后的默认组合。 */
+    public static ServerAuthConfig allValidationDefaults() {
+        ServerAuthConfig defaults = defaults();
+        return new ServerAuthConfig(defaults.tunnelPolicy(), ValidationLevels.ALL,
+                defaults.maxPasswordAttempts(), defaults.passwordTimeoutSec(), defaults.restrictedNotice(),
+                defaults.recoveryReminderNotice(), defaults.rebindNotice());
     }
 
     /** ServerHello 的 features 位。 */
@@ -69,7 +107,8 @@ public record ServerAuthConfig(TunnelPolicy tunnelPolicy, int maxPasswordAttempt
     }
 
     List<String> noticesFor(AccountView account, boolean rebound) {
-        return notices(account.restricted(), account.hasRecoveryPassword(), rebound, restrictedNotice,
+        return notices(validation.newPlayerRestriction() && account.restricted(),
+                !validation.recoveryPassword() || account.hasRecoveryPassword(), rebound, restrictedNotice,
                 recoveryReminderNotice, rebindNotice);
     }
 

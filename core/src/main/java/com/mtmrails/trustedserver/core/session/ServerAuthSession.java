@@ -260,7 +260,7 @@ public final class ServerAuthSession {
                     return reject(RejectReason.ACCOUNT_CONFLICT);
                 }
                 account = new AccountView(playerPub, true, false, false);
-                return beginPassword(PasswordRequest.Kind.SET);
+                return config.validation().loginPassword() ? beginPassword(PasswordRequest.Kind.SET) : finish();
             });
         }
         account = found.get();
@@ -273,7 +273,7 @@ public final class ServerAuthSession {
         if (mojangVerified) {
             return identityVerified(RebindReason.ONLINE_MODE_IDENTITY);
         }
-        if (account.hasRecoveryPassword()) {
+        if (config.validation().recoveryPassword() && account.hasRecoveryPassword()) {
             return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.RECOVERY));
         }
         return done(RejectReason.KEY_MISMATCH);
@@ -281,10 +281,11 @@ public final class ServerAuthSession {
 
     /** 公钥与绑定一致（或已找回）后的判定，PROTOCOL.md 4.6。 */
     private ServerStep afterKeyMatched() {
-        if (account.hasLoginPassword()) {
+        if (config.validation().loginPassword() && account.hasLoginPassword()) {
             return beginPassword(PasswordRequest.Kind.LOGIN);
         }
-        if (account.restricted()) {
+        if (config.validation().loginPassword() && config.validation().newPlayerRestriction()
+                && account.restricted()) {
             return beginPassword(PasswordRequest.Kind.SET);
         }
         return finish();
@@ -350,7 +351,7 @@ public final class ServerAuthSession {
      * 已设登录密码时先验证登录密码，改绑推迟到它通过之后。
      */
     private CompletableFuture<ServerStep> identityVerified(RebindReason reason) {
-        if (account.hasLoginPassword()) {
+        if (config.validation().loginPassword() && account.hasLoginPassword()) {
             pendingRebind = reason;
             return CompletableFuture.completedFuture(beginPassword(PasswordRequest.Kind.LOGIN));
         }
@@ -406,7 +407,8 @@ public final class ServerAuthSession {
             return done(RejectReason.PROTOCOL_ERROR);
         }
         SessionHandover handover = SessionHandover.create(keys, Side.SERVER, password, tunnel);
-        outcome = new AuthOutcome.Accepted(accountId, username, playerPub, account.restricted(),
+        outcome = new AuthOutcome.Accepted(accountId, username, playerPub,
+                config.validation().newPlayerRestriction() && account.restricted(),
                 account.hasLoginPassword(), account.hasRecoveryPassword(), config.noticesFor(account, rebound != null),
                 Optional.ofNullable(rebound), handover);
         state = State.DONE;

@@ -98,7 +98,7 @@ class RealStorageHandshakeTest {
 
     private AuthOutcome login(Device device, String accountId, boolean onlineMode, boolean mojangVerified) {
         ServerAuthSession server = new ServerAuthSession(accountId, "Steve", onlineMode, mojangVerified,
-                ServerAuthConfig.defaults(), serverIdentity, service, RANDOM);
+                ServerAuthConfig.allValidationDefaults(), serverIdentity, service, RANDOM);
         ClientAuthSession client = new ClientAuthSession("mc.test", "Steve", false, device, RANDOM);
         Outbound query = server.start();
         while (true) {

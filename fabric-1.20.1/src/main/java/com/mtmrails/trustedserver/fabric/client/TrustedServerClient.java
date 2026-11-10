@@ -1,6 +1,10 @@
 package com.mtmrails.trustedserver.fabric.client;
 
+import com.mtmrails.trustedserver.client.PresharedKeys;
+import com.mtmrails.trustedserver.client.OnlineTokens;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
+import java.io.IOException;
+import java.nio.file.Path;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -8,9 +12,18 @@ import net.fabricmc.loader.api.FabricLoader;
 public final class TrustedServerClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
-        FabricClientEnvironment environment =
-                new FabricClientEnvironment(FabricLoader.getInstance().getConfigDir().resolve("trustedserver"));
+        Path dataDir = FabricLoader.getInstance().getConfigDir().resolve("trustedserver");
+        PresharedKeys keys = new PresharedKeys(dataDir.resolve("psk.txt"));
+        try {
+            keys.createTemplateIfMissing();
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot create TrustedServer PSK configuration", e);
+        }
+        new PskLoginHandler(keys).register();
+        new OnlineTokenLoginHandler(new OnlineTokens(dataDir.resolve("online_tokens.txt"))).register();
+        FabricClientEnvironment environment = new FabricClientEnvironment(dataDir);
         new ClientLoginHandler(environment).register();
-        TrustedServerFabric.LOGGER.info("TrustedServer client ready");
+        TrustedServerFabric.LOGGER.info(
+                "TrustedServer client ready (PSK / online token gate + Ed25519 player authentication)");
     }
 }

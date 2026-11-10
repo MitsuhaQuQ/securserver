@@ -108,7 +108,8 @@ class ConnectionGateTest {
     @Test
     void ipLockoutCanBeDisabled() {
         NetworkPolicyConfig d = NetworkPolicyConfig.DEFAULT;
-        ConnectionGate gate = gate(new NetworkPolicyConfig(d.ping(), d.login(), d.unverified(), false,
+        ConnectionGate gate = gate(new NetworkPolicyConfig(d.ping(), d.login(), d.unverified(),
+                d.maxPendingLogins(), d.gateTimeoutSeconds(), false,
                 d.ipv4Lockout(), d.ipv6Lockout(), List.of()));
         for (int i = 0; i < 200; i++) {
             gate.passwordFailed(natExit);
@@ -119,7 +120,8 @@ class ConnectionGateTest {
     @Test
     void trustedNetworksBypassAllIpLimits() {
         NetworkPolicyConfig d = NetworkPolicyConfig.DEFAULT;
-        ConnectionGate gate = gate(new NetworkPolicyConfig(d.ping(), d.login(), d.unverified(), true,
+        ConnectionGate gate = gate(new NetworkPolicyConfig(d.ping(), d.login(), d.unverified(),
+                d.maxPendingLogins(), d.gateTimeoutSeconds(), true,
                 d.ipv4Lockout(), d.ipv6Lockout(), List.of(Cidr.parse("203.0.113.0/24"))));
         for (int i = 0; i < 500; i++) {
             assertTrue(gate.allowPing(natExit));
@@ -134,6 +136,23 @@ class ConnectionGateTest {
             gate.allowPing(outside);
         }
         assertFalse(gate.allowPing(outside));
+    }
+
+    @Test
+    void globalPendingLimitCoversDistributedAddressesAndReleasesSlots() {
+        NetworkPolicyConfig d = NetworkPolicyConfig.DEFAULT;
+        ConnectionGate gate = gate(new NetworkPolicyConfig(d.ping(), d.login(), d.unverified(), 2,
+                d.gateTimeoutSeconds(), d.ipLockoutEnabled(), d.ipv4Lockout(), d.ipv6Lockout(), List.of()));
+        InetAddress first = ip("198.51.100.1");
+        InetAddress second = ip("198.51.100.2");
+        InetAddress third = ip("198.51.100.3");
+        assertEquals(ConnectionGate.Verdict.ALLOW, gate.beginLogin(first));
+        assertEquals(ConnectionGate.Verdict.ALLOW, gate.beginLogin(second));
+        assertEquals(ConnectionGate.Verdict.SERVER_BUSY, gate.beginLogin(third));
+        gate.rejectLogin(third);
+        assertEquals(ConnectionGate.Verdict.SERVER_BUSY, gate.beginLogin(ip("198.51.100.4")));
+        gate.endLogin(first, false);
+        assertEquals(ConnectionGate.Verdict.ALLOW, gate.beginLogin(third));
     }
 
     @Test

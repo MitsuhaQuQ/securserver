@@ -21,7 +21,8 @@ public final class ConnectionGate {
         /** 超出频率限制。 */
         RATE_LIMITED,
         /** 地址处于 IP 维度的密码错误锁定期。 */
-        IP_LOCKED
+        IP_LOCKED,
+        SERVER_BUSY
     }
 
     private final NetworkPolicyConfig config;
@@ -31,6 +32,7 @@ public final class ConnectionGate {
     private final TokenBuckets unverified;
     private final Map<String, Deque<Long>> failures = new HashMap<>();
     private final Map<String, Long> lockedUntil = new HashMap<>();
+    private int pendingLogins;
 
     public ConnectionGate(NetworkPolicyConfig config, Clock clock) {
         this.config = Objects.requireNonNull(config, "config");
@@ -46,8 +48,12 @@ public final class ConnectionGate {
     }
 
     /** 收到登录 Hello 时调用。返回 ALLOW 时已消耗一个总量额度。 */
-    public Verdict beginLogin(InetAddress address) {
+    public synchronized Verdict beginLogin(InetAddress address) {
+        if (pendingLogins >= config.maxPendingLogins()) {
+            return Verdict.SERVER_BUSY;
+        }
         if (isTrusted(address)) {
+            pendingLogins++;
             return Verdict.ALLOW;
         }
         String key = NetworkKey.of(address);
@@ -57,6 +63,7 @@ public final class ConnectionGate {
         if (!unverified.hasToken(key) || !login.tryAcquire(key)) {
             return Verdict.RATE_LIMITED;
         }
+        pendingLogins++;
         return Verdict.ALLOW;
     }
 
@@ -64,8 +71,18 @@ public final class ConnectionGate {
      * 登录连接结束时调用。{@code trustedHandshake} 为对方是否完成了可信握手（放行，或在可信握手之后被拒绝）；
      * 为假时消耗一个“未验证”额度。
      */
-    public void endLogin(InetAddress address, boolean trustedHandshake) {
+    public synchronized void endLogin(InetAddress address, boolean trustedHandshake) {
+        if (pendingLogins > 0) {
+            pendingLogins--;
+        }
         if (!trustedHandshake && !isTrusted(address)) {
+            unverified.consume(NetworkKey.of(address));
+        }
+    }
+
+    /** beginLogin 未分配全局槽位便拒绝的尝试；只计入未验证额度。 */
+    public synchronized void rejectLogin(InetAddress address) {
+        if (!isTrusted(address)) {
             unverified.consume(NetworkKey.of(address));
         }
     }

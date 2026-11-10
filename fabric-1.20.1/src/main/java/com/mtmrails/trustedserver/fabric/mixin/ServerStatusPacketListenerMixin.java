@@ -24,7 +24,8 @@ abstract class ServerStatusPacketListenerMixin {
     @Inject(method = "handleStatusRequest", at = @At("HEAD"), cancellable = true)
     private void trustedserver$rateLimit(ServerboundStatusRequestPacket packet, CallbackInfo ci) {
         TrustedServerRuntime runtime = TrustedServerRuntime.get();
-        if (runtime != null && !runtime.allowPing(connection.getRemoteAddress())) {
+        if (runtime != null && (runtime.statusPingDisabled()
+                || !runtime.allowPing(connection.getRemoteAddress()))) {
             connection.disconnect(Component.empty());
             ci.cancel();
         }

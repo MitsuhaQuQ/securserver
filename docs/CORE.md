@@ -56,6 +56,9 @@ com.mtmrails.trustedserver.core
 │   ├── AeadStream                   一条计数流：一把密钥、一个方向、只加密或只解密；序号、使用上限，失败即永久关闭
 │   ├── SecureMessageChannel         认证或密码频道上本端的加密收发（一条 SEAL 流 + 一条 OPEN 流）
 │   ├── SessionHandover              认证成功后移交游戏阶段：同一个密码通道实例 + 隧道计数流（仅开隧道时）
+│   ├── PresharedKeyHandshake        独立的简易双向 PSK 挑战应答；成功后才接入正式登录状态机
+│   ├── OnlineTokenWire              正版 session 后的多设备令牌挑战、签发与确认
+│   ├── PskWire                      `trustedserver:psk` 子协议的严格编解码与用户名上下文
 │   └── CryptoException              受检异常：DH / 标签 / 上限 / 已关闭，调用方断开连接
 ├── session/
 │   ├── ServerAuthSession            服务端状态机
@@ -143,6 +146,21 @@ body    = VarInt 条数（1–4096） | 条数 × (服务端身份公钥 32 | �
 - 文件不超过 1 MiB；本机已有不同密钥时 `importKey(…, overwrite = false)` 返回 `CONFLICT` 且不写入，玩家确认后才以 `overwrite = true` 覆盖
 
 ## 4. 关键接口草图
+
+### 4.1 简易预共享密钥验证
+
+`PresharedKeyHandshake` 提供基础登录门禁，不属于正式协议 v2。验证成功后由 `auth.validation.ed25519` 决定继续正式 `ServerAuthSession`，或直接进入原版登录。PSK 必须是 32 字节高熵随机值，不把人类口令直接当作 PSK。
+
+1. 服务端生成 32 字节 `server_nonce`。
+2. 客户端生成 32 字节 `client_nonce`，双方以 `server_nonce || client_nonce` 为 salt，对 PSK 做 HKDF-Extract。
+3. 客户端证明为 `HKDF-Expand(prk, "tsrv psk v1 client" || SHA-256(context), 32)`；服务端证明使用独立的 `server` 标签。
+4. 服务端先验证客户端证明，再返回服务端证明；客户端验证后双方才把该简易握手视为通过。比较使用常量时间方法，任一实例只能尝试验证一次。
+
+`context` 按 PROTOCOL.md 1.1 绑定 PSK 子协议版本与登录用户名。`PskWire` 负责 `TSPK` 消息的严格编解码；服务端 `PresharedKeyFile` 和客户端 `PresharedKeys` 分别读取本地配置。PSK 逻辑不派生后续加密密钥。
+
+第一阶段 online-mode 不分发全服 PSK。Mojang session 成功后，`OnlineTokenWire` 先挑战客户端已有的账号令牌；缺少或失效时在原版加密连接内自动签发。`OnlineTokenStore` 按正版 UUID 最多保留 8 个令牌并持久化正版用户名声明，`OnlineTokens` 按服务器身份与 UUID 保存客户端副本。session 无效时只允许以离线 UUID 进入 PSK 回退，已声明的正版同名会被拒绝。
+
+### 4.2 正式认证状态机
 
 ```java
 // 服务端：一个连接对应一个实例，由 common 层持有

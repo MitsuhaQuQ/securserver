@@ -8,6 +8,7 @@
     "LegacyQueryHandlerMixin",
     "ServerLoginHelloMixin",
     "ServerLoginPacketListenerAccessor",
+    "ServerLoginSessionFallbackMixin",
     "ServerLoginTimeoutMixin",
     "ServerStatusPacketListenerMixin"
   ],

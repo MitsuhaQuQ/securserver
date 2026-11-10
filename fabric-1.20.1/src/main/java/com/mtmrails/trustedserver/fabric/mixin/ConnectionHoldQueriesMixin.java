@@ -17,7 +17,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * 认证通过之前扣下所有非本 mod 的登录 query（例如 Fabric API 的 early_registration），
- * 机器人在握手前只能看到 {@code trustedserver:auth}，无从判断服务器的加载器与 mod。见 {@link LoginFlow#holdOutgoing}。
+ * 机器人在第一阶段门禁前只能看到 {@code trustedserver:psk}，无从判断服务器的加载器与其他 mod。
+ * 见 {@link LoginFlow#holdOutgoing}。
  */
 @Mixin(Connection.class)
 abstract class ConnectionHoldQueriesMixin {

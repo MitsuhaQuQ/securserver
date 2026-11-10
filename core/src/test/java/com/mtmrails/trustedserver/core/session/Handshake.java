@@ -16,7 +16,7 @@ final class Handshake {
     final Ed25519.KeyPairData serverIdentity;
     final InMemoryAccounts accounts;
     final TestClientEnvironment client;
-    ServerAuthConfig config = ServerAuthConfig.defaults();
+    ServerAuthConfig config = ServerAuthConfig.allValidationDefaults();
     String serverUsername = "Steve";
     String clientUsername = "Steve";
     String accountId = "steve";

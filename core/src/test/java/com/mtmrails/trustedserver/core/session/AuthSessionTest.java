@@ -36,7 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class AuthSessionTest {
-    private static final ServerAuthConfig CONFIG = ServerAuthConfig.defaults();
+    private static final ServerAuthConfig CONFIG = ServerAuthConfig.allValidationDefaults();
     private Ed25519.KeyPairData serverIdentity;
     private InMemoryAccounts accounts;
     private TestClientEnvironment env;
@@ -91,6 +91,20 @@ class AuthSessionTest {
         assertFalse(accepted.hasLoginPassword());
         assertTrue(accounts.accounts.get("steve").restricted);
         assertEquals(List.of(CONFIG.restrictedNotice(), CONFIG.recoveryReminderNotice()), h.clientResult().notices());
+    }
+
+    @Test
+    void ed25519OnlySkipsAllOptionalAccountChecks() {
+        Handshake h = handshake();
+        h.config = new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.DISABLED,
+                new ServerAuthConfig.ValidationLevels(true, false, false, false),
+                3, 60, CONFIG.restrictedNotice(), CONFIG.recoveryReminderNotice(), CONFIG.rebindNotice());
+        h.run();
+
+        assertFalse(h.accepted().restricted());
+        assertTrue(env.prompts.isEmpty());
+        assertTrue(h.accepted().notices().isEmpty());
+        assertArrayEquals(h.clientPublicKey(), accounts.accounts.get("steve").playerPub);
     }
 
     @Test
@@ -796,5 +810,14 @@ class AuthSessionTest {
         String bigger = "x".repeat(1020);
         assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
                 ServerAuthConfig.TunnelPolicy.OPTIONAL, 3, 60, bigger + bigger, bigger, bigger));
+        assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
+                ServerAuthConfig.TunnelPolicy.DISABLED,
+                new ServerAuthConfig.ValidationLevels(false, true, false, false), 3, 60, "", "", ""));
+        assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
+                ServerAuthConfig.TunnelPolicy.DISABLED,
+                new ServerAuthConfig.ValidationLevels(true, false, false, true), 3, 60, "", "", ""));
+        assertThrows(IllegalArgumentException.class, () -> new ServerAuthConfig(
+                ServerAuthConfig.TunnelPolicy.OPTIONAL,
+                new ServerAuthConfig.ValidationLevels(false, false, false, false), 3, 60, "", "", ""));
     }
 }

@@ -11,7 +11,13 @@ import java.util.Objects;
  * @param randomMax RANDOM 模式的上限（含）
  * @param reroll RANDOM 模式重新抽取的间隔
  */
-public record StatusConfig(PlayerCountMode mode, int fixedCount, int randomMin, int randomMax, Duration reroll) {
+public record StatusConfig(ProtectionMode protection, boolean disablePing, String enhancedMotd,
+        PlayerCountMode mode, int fixedCount, int randomMin, int randomMax, Duration reroll) {
+    public enum ProtectionMode {
+        NORMAL,
+        ENHANCED
+    }
+
     public enum PlayerCountMode {
         /** 显示真实人数。 */
         REAL,
@@ -21,9 +27,12 @@ public record StatusConfig(PlayerCountMode mode, int fixedCount, int randomMin, 
         RANDOM
     }
 
-    public static final StatusConfig DEFAULT = new StatusConfig(PlayerCountMode.REAL, 20, 5, 30, Duration.ofMinutes(5));
+    public static final StatusConfig DEFAULT = new StatusConfig(ProtectionMode.NORMAL, false, "A Minecraft Server",
+            PlayerCountMode.REAL, 20, 5, 30, Duration.ofMinutes(5));
 
     public StatusConfig {
+        Objects.requireNonNull(protection, "protection");
+        Objects.requireNonNull(enhancedMotd, "enhancedMotd");
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(reroll, "reroll");
         if (fixedCount < 0 || randomMin < 0 || randomMin > randomMax) {
@@ -31,6 +40,9 @@ public record StatusConfig(PlayerCountMode mode, int fixedCount, int randomMin, 
         }
         if (reroll.isNegative() || reroll.isZero()) {
             throw new IllegalArgumentException("reroll interval must be positive");
+        }
+        if (enhancedMotd.isBlank()) {
+            throw new IllegalArgumentException("enhanced MOTD must not be blank");
         }
     }
 }

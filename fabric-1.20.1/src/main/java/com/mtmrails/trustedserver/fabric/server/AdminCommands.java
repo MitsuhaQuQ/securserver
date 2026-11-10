@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
+import java.io.IOException;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
@@ -36,6 +37,27 @@ final class AdminCommands {
                             + (runtime == null ? "unavailable" : runtime.fingerprint())), false);
                     return 1;
                 }))
+                .then(Commands.literal("clear-online-claim")
+                        .then(Commands.argument("player", StringArgumentType.word()).executes(ctx -> {
+                            TrustedServerRuntime runtime = TrustedServerRuntime.get();
+                            String player = StringArgumentType.getString(ctx, "player");
+                            if (runtime == null) {
+                                ctx.getSource().sendFailure(Component.literal("TrustedServer is not active"));
+                                return 0;
+                            }
+                            try {
+                                if (!runtime.onlineTokens().clearClaim(player)) {
+                                    ctx.getSource().sendFailure(Component.literal("No online claim for " + player));
+                                    return 0;
+                                }
+                                ctx.getSource().sendSuccess(() -> Component.literal(
+                                        "Cleared online claim and tokens for " + player), true);
+                                return 1;
+                            } catch (IOException e) {
+                                ctx.getSource().sendFailure(Component.literal("clear online claim failed"));
+                                return 0;
+                            }
+                        })))
                 .then(Commands.literal("reset")
                         .then(Commands.literal("key").then(Commands.argument("player", StringArgumentType.word())
                                 .executes(ctx -> run(ctx, "reset key", r -> r.accounts().resetKey(accountId(ctx))))))

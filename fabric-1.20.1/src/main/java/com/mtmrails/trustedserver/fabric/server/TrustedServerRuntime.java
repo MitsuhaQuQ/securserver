@@ -5,6 +5,8 @@ import com.mtmrails.trustedserver.core.crypto.SessionHandover;
 import com.mtmrails.trustedserver.core.session.ServerAuthConfig;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
 import com.mtmrails.trustedserver.server.ServerIdentity;
+import com.mtmrails.trustedserver.server.PresharedKeyFile;
+import com.mtmrails.trustedserver.server.OnlineTokenStore;
 import com.mtmrails.trustedserver.server.account.AccountService;
 import com.mtmrails.trustedserver.server.config.ConfigException;
 import com.mtmrails.trustedserver.server.config.ConfigLoader;
@@ -24,6 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -42,6 +45,8 @@ public final class TrustedServerRuntime {
     private final ServerAuthConfig authConfig;
     private final Ed25519.KeyPairData identity;
     private final String fingerprint;
+    private final byte[] psk;
+    private final OnlineTokenStore onlineTokens;
     private final AccountService accounts;
     private final ConnectionGate gate;
     private final StatusSanitizer status;
@@ -50,10 +55,13 @@ public final class TrustedServerRuntime {
     final Map<ServerLoginPacketListenerImpl, LoginFlow> flows = new ConcurrentHashMap<>();
     private final Map<UUID, SessionHandover> handovers = new ConcurrentHashMap<>();
 
-    private TrustedServerRuntime(ServerConfig config, ServerIdentity.Loaded identity, AccountService accounts) {
+    private TrustedServerRuntime(ServerConfig config, ServerIdentity.Loaded identity,
+            PresharedKeyFile.Loaded psk, OnlineTokenStore onlineTokens, AccountService accounts) {
         this.config = config;
         this.identity = identity.key();
         this.fingerprint = identity.fingerprint();
+        this.psk = psk.key();
+        this.onlineTokens = onlineTokens;
         this.accounts = accounts;
         this.gate = new ConnectionGate(config.network(), Clock.systemUTC());
         this.status = new StatusSanitizer(config.status(), Clock.systemUTC(), new Random());
@@ -71,7 +79,8 @@ public final class TrustedServerRuntime {
                 TrustedServerFabric.LOGGER.info("Tunnel mode is not available yet in this version; "
                         + "authentication is still encrypted");
             }
-            auth = new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.DISABLED, auth.maxPasswordAttempts(),
+            auth = new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.DISABLED, auth.validation(),
+                    auth.maxPasswordAttempts(),
                     auth.passwordTimeoutSec(), auth.restrictedNotice(), auth.recoveryReminderNotice(), auth.rebindNotice());
         }
         this.authConfig = auth;
@@ -93,17 +102,24 @@ public final class TrustedServerRuntime {
             TrustedServerFabric.LOGGER.warn("Unknown key in server.json ignored: {}", key);
         }
         ServerIdentity.Loaded identity;
+        PresharedKeyFile.Loaded psk;
+        OnlineTokenStore onlineTokens = new OnlineTokenStore(dir.resolve("online_tokens.txt"));
+        SecureRandom random = new SecureRandom();
         try {
-            identity = ServerIdentity.loadOrCreate(dir.resolve("server_identity.key"), new SecureRandom());
+            identity = ServerIdentity.loadOrCreate(dir.resolve("server_identity.key"), random);
+            psk = PresharedKeyFile.loadOrCreate(dir.resolve("psk.key"), random);
+            onlineTokens.validate();
         } catch (IOException e) {
-            throw new IllegalStateException("TrustedServer: cannot load server identity, refusing to start: "
+            throw new IllegalStateException("TrustedServer: cannot load server credentials, refusing to start: "
                     + e.getMessage(), e);
         }
         AccountService accounts = AccountService.open(Path.of(loaded.config().databasePath()),
                 loaded.config().accounts(), Clock.systemUTC(), new SecureRandom());
-        instance = new TrustedServerRuntime(loaded.config(), identity, accounts);
+        instance = new TrustedServerRuntime(loaded.config(), identity, psk, onlineTokens, accounts);
         TrustedServerFabric.LOGGER.info("Server identity {}: {}", identity.created() ? "created" : "loaded",
                 identity.fingerprint());
+        TrustedServerFabric.LOGGER.info("PSK login gate enabled ({} {})",
+                psk.created() ? "created" : "loaded", dir.resolve("psk.key"));
         accounts.purgeOldAudit().thenAccept(n -> {
             if (n > 0) {
                 TrustedServerFabric.LOGGER.info("Purged {} old audit records", n);
@@ -118,6 +134,7 @@ public final class TrustedServerRuntime {
             runtime.scheduler.shutdownNow();
             runtime.handovers.values().forEach(SessionHandover::close);
             runtime.accounts.close();
+            Arrays.fill(runtime.psk, (byte) 0);
         }
     }
 
@@ -134,6 +151,10 @@ public final class TrustedServerRuntime {
         return config.authTimeoutSec();
     }
 
+    public int gateTimeoutSec() {
+        return config.network().gateTimeoutSeconds();
+    }
+
     /** 原版登录超时（tick）须不短于我们的认证超时，留出余量。 */
     public int loginTimeoutTicks() {
         return (config.authTimeoutSec() + 15) * 20;
@@ -145,6 +166,14 @@ public final class TrustedServerRuntime {
 
     public String fingerprint() {
         return fingerprint;
+    }
+
+    public byte[] psk() {
+        return psk.clone();
+    }
+
+    public OnlineTokenStore onlineTokens() {
+        return onlineTokens;
     }
 
     public AccountService accounts() {
@@ -178,10 +207,28 @@ public final class TrustedServerRuntime {
 
     /** 清空玩家样本，人数按配置显示。 */
     public ServerStatus sanitize(ServerStatus original) {
+        if (status.enhanced()) {
+            Optional<ServerStatus.Players> players = Optional.of(new ServerStatus.Players(20,
+                    status.displayedOnline(original.players().map(ServerStatus.Players::online).orElse(0), 20),
+                    List.of()));
+            Component motd = Component.literal(status.enhancedMotd() + "§b§d§f§d§b");
+            Optional<ServerStatus.Version> version = original.version().map(v ->
+                    new ServerStatus.Version("Minecraft Server", v.protocol()));
+            return new ServerStatus(motd, players, version, Optional.empty(), original.enforcesSecureChat());
+        }
         Optional<ServerStatus.Players> players = original.players().map(p ->
                 new ServerStatus.Players(p.max(), status.displayedOnline(p.online(), p.max()), List.of()));
         return new ServerStatus(original.description(), players, original.version(), original.favicon(),
                 original.enforcesSecureChat());
+    }
+
+    public boolean statusPingDisabled() {
+        return status.pingDisabled();
+    }
+
+    /** 增强模式不回答旧版 Ping，避免它绕过现代状态响应的诱饵字段。 */
+    public boolean legacyPingDisabled() {
+        return status.enhanced();
     }
 
     public int displayedPlayerCount(int real, int max) {

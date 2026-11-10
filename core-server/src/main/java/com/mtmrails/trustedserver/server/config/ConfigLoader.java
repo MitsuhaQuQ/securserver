@@ -88,10 +88,17 @@ public final class ConfigLoader {
 
     private static ServerAuthConfig readAuth(JsonSection top, ServerConfig d) throws ConfigException {
         JsonSection auth = top.section("auth");
+        JsonSection validation = auth.section("validation");
         JsonSection notices = top.section("notices");
         ServerAuthConfig a = d.auth();
+        ServerAuthConfig.ValidationLevels v = a.validation();
         return new ServerAuthConfig(
                 auth.enumValue("tunnel", a.tunnelPolicy(), ServerAuthConfig.TunnelPolicy.class),
+                new ServerAuthConfig.ValidationLevels(
+                        validation.bool("ed25519", v.ed25519()),
+                        validation.bool("loginPassword", v.loginPassword()),
+                        validation.bool("recoveryPassword", v.recoveryPassword()),
+                        validation.bool("newPlayerRestriction", v.newPlayerRestriction())),
                 auth.integer("maxPasswordAttempts", a.maxPasswordAttempts(), 1, 255),
                 auth.integer("passwordPromptTimeoutSeconds", a.passwordTimeoutSec(), 1, 65535),
                 notices.string("restricted", a.restrictedNotice()),
@@ -144,6 +151,8 @@ public final class ConfigLoader {
                 rate(network.section("ping"), n.ping()),
                 rate(network.section("login"), n.login()),
                 rate(network.section("unverified"), n.unverified()),
+                network.integer("maxPendingLogins", n.maxPendingLogins(), 1, 100_000),
+                network.integer("gateTimeoutSeconds", n.gateTimeoutSeconds(), 2, 300),
                 lockout.bool("enabled", n.ipLockoutEnabled()),
                 ipLockout(lockout.section("ipv4"), n.ipv4Lockout()),
                 ipLockout(lockout.section("ipv6"), n.ipv6Lockout()),
@@ -168,7 +177,10 @@ public final class ConfigLoader {
         if (min > max) {
             throw status.error("randomMin", "must not be greater than randomMax");
         }
-        return new StatusConfig(status.enumValue("playerCount", s.mode(), StatusConfig.PlayerCountMode.class),
+        return new StatusConfig(
+                status.enumValue("mode", s.protection(), StatusConfig.ProtectionMode.class),
+                status.bool("disablePing", s.disablePing()), status.string("enhancedMotd", s.enhancedMotd()),
+                status.enumValue("playerCount", s.mode(), StatusConfig.PlayerCountMode.class),
                 status.integer("fixed", s.fixedCount(), 0, 1_000_000), min, max,
                 Duration.ofMinutes(status.integer("rerollMinutes", (int) s.reroll().toMinutes(), 1, 1440)));
     }
@@ -191,6 +203,12 @@ public final class ConfigLoader {
 
         JsonObject auth = new JsonObject();
         auth.addProperty("tunnel", lower(c.auth().tunnelPolicy()));
+        JsonObject validation = new JsonObject();
+        validation.addProperty("ed25519", c.auth().validation().ed25519());
+        validation.addProperty("loginPassword", c.auth().validation().loginPassword());
+        validation.addProperty("recoveryPassword", c.auth().validation().recoveryPassword());
+        validation.addProperty("newPlayerRestriction", c.auth().validation().newPlayerRestriction());
+        auth.add("validation", validation);
         auth.addProperty("maxPasswordAttempts", c.auth().maxPasswordAttempts());
         auth.addProperty("passwordPromptTimeoutSeconds", c.auth().passwordTimeoutSec());
         auth.addProperty("authTimeoutSeconds", c.authTimeoutSec());
@@ -225,6 +243,8 @@ public final class ConfigLoader {
         network.add("ping", rateJson(c.network().ping()));
         network.add("login", rateJson(c.network().login()));
         network.add("unverified", rateJson(c.network().unverified()));
+        network.addProperty("maxPendingLogins", c.network().maxPendingLogins());
+        network.addProperty("gateTimeoutSeconds", c.network().gateTimeoutSeconds());
         JsonObject lockout = new JsonObject();
         lockout.addProperty("enabled", c.network().ipLockoutEnabled());
         lockout.add("ipv4", lockoutJson(c.network().ipv4Lockout()));
@@ -236,6 +256,9 @@ public final class ConfigLoader {
         root.add("network", network);
 
         JsonObject status = new JsonObject();
+        status.addProperty("mode", lower(c.status().protection()));
+        status.addProperty("disablePing", c.status().disablePing());
+        status.addProperty("enhancedMotd", c.status().enhancedMotd());
         status.addProperty("playerCount", lower(c.status().mode()));
         status.addProperty("fixed", c.status().fixedCount());
         status.addProperty("randomMin", c.status().randomMin());

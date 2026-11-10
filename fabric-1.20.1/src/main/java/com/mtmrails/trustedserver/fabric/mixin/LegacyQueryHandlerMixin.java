@@ -32,7 +32,8 @@ abstract class LegacyQueryHandlerMixin {
             target = "Lnet/minecraft/server/network/LegacyQueryHandler;sendFlushAndClose(Lio/netty/channel/ChannelHandlerContext;Lio/netty/buffer/ByteBuf;)V"))
     private void trustedserver$rateLimit(LegacyQueryHandler self, ChannelHandlerContext ctx, ByteBuf buf) {
         TrustedServerRuntime runtime = TrustedServerRuntime.get();
-        if (runtime != null && !runtime.allowPing(ctx.channel().remoteAddress())) {
+        if (runtime != null && (runtime.legacyPingDisabled()
+                || !runtime.allowPing(ctx.channel().remoteAddress()))) {
             buf.release();
             ctx.close();
             return;

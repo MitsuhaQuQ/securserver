@@ -14,7 +14,8 @@ class StatusSanitizerTest {
     private final TestClock clock = new TestClock();
 
     private StatusSanitizer sanitizer(StatusConfig.PlayerCountMode mode, int fixed, int min, int max) {
-        return new StatusSanitizer(new StatusConfig(mode, fixed, min, max, Duration.ofMinutes(5)), clock, new Random(1));
+        return new StatusSanitizer(new StatusConfig(StatusConfig.ProtectionMode.NORMAL, false, "decoy",
+                mode, fixed, min, max, Duration.ofMinutes(5)), clock, new Random(1));
     }
 
     @Test
@@ -46,5 +47,16 @@ class StatusSanitizerTest {
         }
         assertTrue(seen.size() > 10, "random values should vary across reroll periods");
         assertTrue(s.displayedOnline(0, 3) <= 3);
+    }
+
+    @Test
+    void enhancedModeHidesRealCountAndCanDisablePing() {
+        StatusConfig config = new StatusConfig(StatusConfig.ProtectionMode.ENHANCED, true, "decoy",
+                StatusConfig.PlayerCountMode.REAL, 20, 5, 30, Duration.ofMinutes(5));
+        StatusSanitizer sanitizer = new StatusSanitizer(config, clock, new Random());
+        assertEquals(0, sanitizer.displayedOnline(12, 20));
+        assertTrue(sanitizer.enhanced());
+        assertTrue(sanitizer.pingDisabled());
+        assertEquals("decoy", sanitizer.enhancedMotd());
     }
 }

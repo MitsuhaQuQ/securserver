@@ -117,12 +117,12 @@ final class ClientLoginHandler {
         return buf;
     }
 
-    private static Connection connection(ClientHandshakePacketListenerImpl handler) {
+    static Connection connection(ClientHandshakePacketListenerImpl handler) {
         return ((ClientHandshakePacketListenerAccessor) handler).trustedserver$connection();
     }
 
     /** TOFU 记录使用玩家输入的服务器地址；拿不到时退回连接的远端地址。 */
-    private static String serverAddress(Minecraft client, ClientHandshakePacketListenerImpl handler) {
+    static String serverAddress(Minecraft client, ClientHandshakePacketListenerImpl handler) {
         ServerData server = ((ClientHandshakePacketListenerAccessor) handler).trustedserver$serverData();
         if (server == null) {
             server = client.getCurrentServer();

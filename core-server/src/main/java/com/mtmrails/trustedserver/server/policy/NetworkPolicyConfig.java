@@ -10,10 +10,11 @@ import java.util.Objects;
  * @param unverified 未通过可信握手的连接额外消耗的额度
  * @param trustedNetworks 不受任何 IP 维度限流与锁定的网段
  */
-public record NetworkPolicyConfig(RateLimit ping, RateLimit login, RateLimit unverified, boolean ipLockoutEnabled,
+public record NetworkPolicyConfig(RateLimit ping, RateLimit login, RateLimit unverified,
+        int maxPendingLogins, int gateTimeoutSeconds, boolean ipLockoutEnabled,
         IpLockout ipv4Lockout, IpLockout ipv6Lockout, List<Cidr> trustedNetworks) {
     public static final NetworkPolicyConfig DEFAULT = new NetworkPolicyConfig(
-            new RateLimit(60, 20), new RateLimit(30, 15), new RateLimit(10, 10), true,
+            new RateLimit(60, 20), new RateLimit(30, 15), new RateLimit(10, 10), 256, 10, true,
             new IpLockout(50, Duration.ofMinutes(15), Duration.ofMinutes(5)),
             new IpLockout(20, Duration.ofMinutes(15), Duration.ofMinutes(15)),
             List.of());
@@ -25,5 +26,8 @@ public record NetworkPolicyConfig(RateLimit ping, RateLimit login, RateLimit unv
         Objects.requireNonNull(ipv4Lockout, "ipv4Lockout");
         Objects.requireNonNull(ipv6Lockout, "ipv6Lockout");
         trustedNetworks = List.copyOf(trustedNetworks);
+        if (maxPendingLogins < 1 || gateTimeoutSeconds < 2) {
+            throw new IllegalArgumentException("network pending login limits must be positive");
+        }
     }
 }

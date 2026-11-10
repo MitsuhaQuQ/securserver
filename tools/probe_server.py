@@ -111,6 +111,9 @@ def status(host, port):
     length = read_varint_from(read)
     info = json.loads(body[pos[0]:pos[0] + length].decode("utf-8"))
     players = info.get("players", {})
+    print("description:", info.get("description"))
+    print("version:", info.get("version"))
+    print("favicon present:", "favicon" in info)
     print("online:", players.get("online"), "max:", players.get("max"))
     print("sample:", players.get("sample", []), "(应为空)")
     return info

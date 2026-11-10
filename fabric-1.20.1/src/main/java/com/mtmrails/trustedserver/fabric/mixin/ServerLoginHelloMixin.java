@@ -28,4 +28,15 @@ abstract class ServerLoginHelloMixin {
             ci.cancel();
         }
     }
+
+    @Inject(method = "handleHello", at = @At("TAIL"))
+    private void trustedserver$rememberHelloName(ServerboundHelloPacket packet, CallbackInfo ci) {
+        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        if (runtime != null) {
+            var flow = runtime.loginFlow((ServerLoginPacketListenerImpl) (Object) this);
+            if (flow != null) {
+                flow.recordHelloName(packet.name());
+            }
+        }
+    }
 }

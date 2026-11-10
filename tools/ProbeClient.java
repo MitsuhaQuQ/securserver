@@ -1,5 +1,5 @@
-import com.mtmrails.trustedserver.client.KeyTarget;
-import com.mtmrails.trustedserver.client.PlayerKeyStore;
+import com.mtmrails.trustedserver.core.crypto.PresharedKeyHandshake;
+import com.mtmrails.trustedserver.core.crypto.PskWire;
 import com.mtmrails.trustedserver.core.crypto.Ed25519;
 import com.mtmrails.trustedserver.core.message.Channel;
 import com.mtmrails.trustedserver.core.message.PasswordRequest;
@@ -15,23 +15,32 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.SecureRandom;
-import java.util.HashMap;
-import java.util.Map;
+import java.security.KeyFactory;
+import java.security.PublicKey;
+import java.security.spec.X509EncodedKeySpec;
+import java.nio.file.Files;
+import java.util.Base64;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
 import java.util.zip.Deflater;
 import java.util.zip.Inflater;
 
 /**
- * 用核心层完成真实认证握手的探测客户端（无图形界面），验证“认证通过 → 补发其他登录 query → 登录成功”这条路径。
+ * 用核心层完成第一阶段 PSK 门禁的探测客户端（无图形界面），验证“PSK 通过 → 补发其他登录 query → 登录成功”。
  * 对非本 mod 的 query 回答“不理解”，与原版客户端一致。
  *
- * 用法：java -cp core.jar:core-client.jar tools/ProbeClient.java [host] [port] [name] [keyDir]
+ * 用法：java -cp core.jar tools/ProbeClient.java [host] [port] [name] [pskFile] [--prompt]
  */
 public final class ProbeClient {
     private final Socket socket;
-    private final DataInputStream in;
-    private final OutputStream out;
+    private DataInputStream in;
+    private OutputStream out;
     private int threshold = -1;
 
     ProbeClient(String host, int port) throws IOException {
@@ -45,40 +54,58 @@ public final class ProbeClient {
         String host = args.length > 0 ? args[0] : "127.0.0.1";
         int port = args.length > 1 ? Integer.parseInt(args[1]) : 25565;
         String name = args.length > 2 ? args[2] : "ProbeClient";
-        Path keyDir = Path.of(args.length > 3 ? args[3] : "build/probe-client-keys");
-
-        PlayerKeyStore keys = new PlayerKeyStore(keyDir);
-        Map<String, byte[]> pins = new HashMap<>();
+        Path pskFile = Path.of(args.length > 3 ? args[3] : "fabric-1.20.1/run/config/trustedserver/psk.key");
+        boolean simulatePrompt = args.length > 4 && "--prompt".equals(args[4]);
+        byte[] psk = Base64.getDecoder().decode(Files.readString(pskFile).trim());
         SecureRandom random = new SecureRandom();
-        ClientEnvironment env = new ClientEnvironment() {
-            public Optional<byte[]> pinnedServerKey(String a) { return Optional.ofNullable(pins.get(a)); }
-            public void pinServerKey(String a, byte[] k) { pins.put(a, k); }
-            public CompletableFuture<Boolean> confirmServerKeyChange(String a, byte[] o, byte[] n) {
+        PresharedKeyHandshake.Client pskSession = null;
+        boolean promptRequested = false;
+        Ed25519.KeyPairData playerKey = Ed25519.generate(random);
+        byte[][] pinnedServer = new byte[1][];
+        ClientEnvironment environment = new ClientEnvironment() {
+            public Optional<byte[]> pinnedServerKey(String address) {
+                return Optional.ofNullable(pinnedServer[0]).map(byte[]::clone);
+            }
+            public void pinServerKey(String address, byte[] key) {
+                pinnedServer[0] = key.clone();
+            }
+            public CompletableFuture<Boolean> confirmServerKeyChange(String address, byte[] oldKey, byte[] newKey) {
                 return CompletableFuture.completedFuture(false);
             }
-            public CompletableFuture<Ed25519.KeyPairData> playerKey(byte[] server, String user) {
-                try {
-                    return CompletableFuture.completedFuture(keys.getOrCreate(new KeyTarget(server, user), random));
-                } catch (IOException e) {
-                    return CompletableFuture.failedFuture(e);
-                }
+            public CompletableFuture<Ed25519.KeyPairData> playerKey(byte[] serverKey, String username) {
+                return CompletableFuture.completedFuture(playerKey);
             }
-            public CompletableFuture<Optional<String>> promptPassword(PasswordRequest r) {
-                System.out.println("  password prompt " + r.kind() + " -> skip");
+            public CompletableFuture<Optional<String>> promptPassword(PasswordRequest request) {
                 return CompletableFuture.completedFuture(Optional.empty());
             }
         };
-        ClientAuthSession session = new ClientAuthSession(host + ":" + port, name, false, env, random);
+        ClientAuthSession formalAuth = new ClientAuthSession(host + ":" + port, name, false, environment, random);
 
         ProbeClient c = new ProbeClient(host, port);
         c.send(0x00, concat(varint(763), string(host), new byte[] {(byte) (port >> 8), (byte) port}, varint(2)));
         c.send(0x00, concat(string(name), new byte[] {0}));
         boolean authFinished = false;
+        boolean baseFinished = false;
         while (true) {
             byte[] packet = c.receive();
             Reader r = new Reader(packet);
             int id = r.varint();
             switch (id) {
+                case 0x01 -> {
+                    r.string(); // legacy server id, empty in 1.20.1
+                    byte[] encodedPublic = r.bytes();
+                    byte[] verifyToken = r.bytes();
+                    PublicKey publicKey = KeyFactory.getInstance("RSA")
+                            .generatePublic(new X509EncodedKeySpec(encodedPublic));
+                    KeyGenerator generator = KeyGenerator.getInstance("AES");
+                    generator.init(128);
+                    SecretKey secret = generator.generateKey();
+                    Cipher rsa = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+                    rsa.init(Cipher.ENCRYPT_MODE, publicKey);
+                    c.send(0x01, concat(bytes(rsa.doFinal(secret.getEncoded())), bytes(rsa.doFinal(verifyToken))));
+                    c.enableEncryption(secret);
+                    System.out.println("online encryption established; intentionally skipping Mojang session join");
+                }
                 case 0x03 -> {
                     c.threshold = r.varint();
                     System.out.println("compression threshold " + c.threshold);
@@ -87,30 +114,54 @@ public final class ProbeClient {
                     int messageId = r.varint();
                     String channel = r.string();
                     byte[] data = r.rest();
-                    Optional<Channel> ours = Channel.fromId(channel);
-                    if (ours.isEmpty()) {
+                    if (!PskWire.CHANNEL.equals(channel)) {
+                        Optional<Channel> formalChannel = Channel.fromId(channel);
+                        if (formalChannel.isPresent()) {
+                            ClientStep step = formalAuth.onQuery(formalChannel.orElseThrow(), data).join();
+                            if (step instanceof ClientStep.Reply replyStep) {
+                                c.send(0x02, concat(varint(messageId), new byte[] {1}, replyStep.payload()));
+                            } else if (step instanceof ClientStep.Complete complete) {
+                                authFinished = true;
+                                c.send(0x02, concat(varint(messageId), new byte[] {1}, complete.payload()));
+                                System.out.println("Ed25519 server identity and player proof verified -> finish ack");
+                            } else {
+                                throw new IllegalStateException("formal auth failed: "
+                                        + ((ClientStep.Fail) step).failure());
+                            }
+                            break;
+                        }
                         System.out.println("query " + channel + (authFinished ? " (after auth)" : " (BEFORE auth!)")
                                 + " -> not understood");
                         c.send(0x02, concat(varint(messageId), new byte[] {0}));
                         break;
                     }
-                    ClientStep step = session.onQuery(ours.get(), data).join();
-                    System.out.println("query " + channel + " -> " + step.getClass().getSimpleName());
                     byte[] reply;
-                    if (step instanceof ClientStep.Reply rep) {
-                        reply = rep.payload();
-                    } else if (step instanceof ClientStep.Complete done) {
-                        reply = done.payload();
-                        authFinished = true;
-                        System.out.println("  notices: " + done.result().notices());
+                    PskWire.Type type = PskWire.type(data);
+                    if (type == PskWire.Type.CHALLENGE) {
+                        if (simulatePrompt && !promptRequested) {
+                            promptRequested = true;
+                            reply = PskWire.encodePromptRequest();
+                            System.out.println("PSK missing -> prompt request");
+                            c.send(0x02, concat(varint(messageId), new byte[] {1}, reply));
+                            break;
+                        }
+                        pskSession = PresharedKeyHandshake.beginClient(psk, PskWire.context(name),
+                                PskWire.decodeChallenge(data), random);
+                        reply = PskWire.encodeClientResponse(pskSession.response());
+                        System.out.println("PSK challenge -> client response");
+                    } else if (type == PskWire.Type.SERVER_PROOF && pskSession != null) {
+                        pskSession.verify(PskWire.decodeServerProof(data));
+                        reply = PskWire.encodeAck();
+                        baseFinished = true;
+                        System.out.println("PSK server proof verified -> ack");
                     } else {
-                        System.out.println("LOCAL FAILURE: " + ((ClientStep.Fail) step).failure());
-                        return;
+                        throw new IllegalStateException("unexpected PSK message " + type);
                     }
                     c.send(0x02, concat(varint(messageId), new byte[] {1}, reply));
                 }
                 case 0x02 -> {
-                    System.out.println("LOGIN SUCCESS (auth finished first: " + authFinished + ")");
+                    System.out.println("LOGIN SUCCESS (base gate: " + baseFinished
+                            + ", Ed25519 auth: " + authFinished + ")");
                     c.socket.close();
                     return;
                 }
@@ -121,6 +172,16 @@ public final class ProbeClient {
                 default -> System.out.println("login packet 0x" + Integer.toHexString(id));
             }
         }
+    }
+
+    void enableEncryption(SecretKey secret) throws Exception {
+        Cipher decrypt = Cipher.getInstance("AES/CFB8/NoPadding");
+        Cipher encrypt = Cipher.getInstance("AES/CFB8/NoPadding");
+        IvParameterSpec iv = new IvParameterSpec(secret.getEncoded());
+        decrypt.init(Cipher.DECRYPT_MODE, secret, iv);
+        encrypt.init(Cipher.ENCRYPT_MODE, secret, iv);
+        in = new DataInputStream(new CipherInputStream(socket.getInputStream(), decrypt));
+        out = new CipherOutputStream(socket.getOutputStream(), encrypt);
     }
 
     void send(int id, byte[] body) throws IOException {
@@ -206,6 +267,13 @@ public final class ProbeClient {
             return s;
         }
 
+        byte[] bytes() {
+            int n = varint();
+            byte[] value = java.util.Arrays.copyOfRange(d, p, p + n);
+            p += n;
+            return value;
+        }
+
         byte[] rest() {
             byte[] r = java.util.Arrays.copyOfRange(d, p, d.length);
             p = d.length;
@@ -226,6 +294,10 @@ public final class ProbeClient {
     static byte[] string(String s) {
         byte[] b = s.getBytes(StandardCharsets.UTF_8);
         return concat(varint(b.length), b);
+    }
+
+    static byte[] bytes(byte[] value) {
+        return concat(varint(value.length), value);
     }
 
     static byte[] concat(byte[]... parts) {

@@ -23,12 +23,28 @@ public final class StatusSanitizer {
 
     /** 对外显示的在线人数，不超过最大人数。 */
     public int displayedOnline(int realOnline, int maxPlayers) {
+        if (config.protection() == StatusConfig.ProtectionMode.ENHANCED
+                && config.mode() == StatusConfig.PlayerCountMode.REAL) {
+            return 0;
+        }
         int value = switch (config.mode()) {
             case REAL -> realOnline;
             case FIXED -> config.fixedCount();
             case RANDOM -> randomCount();
         };
         return Math.max(0, Math.min(value, maxPlayers));
+    }
+
+    public boolean enhanced() {
+        return config.protection() == StatusConfig.ProtectionMode.ENHANCED;
+    }
+
+    public boolean pingDisabled() {
+        return enhanced() && config.disablePing();
+    }
+
+    public String enhancedMotd() {
+        return config.enhancedMotd();
     }
 
     private synchronized int randomCount() {

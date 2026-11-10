@@ -30,6 +30,8 @@ class ConfigLoaderTest {
         assertEquals(ServerConfig.DEFAULT, created.config());
         String written = Files.readString(file, StandardCharsets.UTF_8);
         assertTrue(written.contains("\"tunnel\": \"optional\""));
+        assertTrue(written.contains("\"ed25519\": true"));
+        assertTrue(written.contains("\"loginPassword\": false"));
         assertTrue(written.contains("设定密码后解除新用户限制")); // 中文不被转义
 
         ConfigLoader.Result reloaded = ConfigLoader.loadOrCreate(file);
@@ -53,6 +55,7 @@ class ConfigLoaderTest {
         assertEquals(ServerAuthConfig.TunnelPolicy.REQUIRED, config.auth().tunnelPolicy());
         assertEquals(StatusConfig.PlayerCountMode.FIXED, config.status().mode());
         assertEquals(42, config.status().fixedCount());
+        assertEquals(StatusConfig.ProtectionMode.NORMAL, config.status().protection());
         assertEquals(2, config.network().trustedNetworks().size());
         assertEquals(ServerConfig.DEFAULT.accounts(), config.accounts());
         assertEquals(90, config.authTimeoutSec());
@@ -62,7 +65,10 @@ class ConfigLoaderTest {
     void roundTripPreservesSettings() throws Exception {
         String json = """
                 {"configVersion": 1,
-                 "auth": {"tunnel": "disabled", "maxPasswordAttempts": 5, "passwordPromptTimeoutSeconds": 30,
+                 "auth": {"tunnel": "disabled",
+                          "validation": {"ed25519": true, "loginPassword": false,
+                                         "recoveryPassword": false, "newPlayerRestriction": false},
+                          "maxPasswordAttempts": 5, "passwordPromptTimeoutSeconds": 30,
                           "authTimeoutSeconds": 60},
                  "password": {"minLength": 8, "argon2": {"memoryKib": 65536, "iterations": 3}},
                  "accounts": {"database": "data/p.db", "lockoutMinutes": 30},
@@ -79,6 +85,7 @@ class ConfigLoaderTest {
         assertEquals("data/p.db", config.databasePath());
         assertFalse(config.network().ipLockoutEnabled());
         assertEquals(RejectionText.Mode.CUSTOM, config.rejection().mode());
+        assertFalse(config.auth().validation().loginPassword());
     }
 
     @Test
@@ -105,6 +112,12 @@ class ConfigLoaderTest {
         assertTrue(error("{\"rejection\": {\"mode\": \"custom\", \"customText\": \"  \"}}")
                 .contains("rejection.customText"));
         assertTrue(error("{\"auth\": {\"passwordPromptTimeoutSeconds\": 120}}").contains("authTimeoutSeconds"));
+        assertTrue(error("{\"auth\": {\"tunnel\": \"disabled\", \"validation\": "
+                + "{\"ed25519\": false, \"loginPassword\": true}}}")
+                .contains("require auth.validation.ed25519"));
+        assertTrue(error("{\"auth\": {\"tunnel\": \"disabled\", \"validation\": "
+                + "{\"loginPassword\": false, \"newPlayerRestriction\": true}}}")
+                .contains("newPlayerRestriction"));
         assertTrue(error("{\"password\": {\"minLength\": 10, \"maxLength\": 8}}").contains("password length"));
         assertTrue(error("{\"ipLockout\": 1, \"configVersion\": 2}").contains("newer"));
         assertTrue(error("{not json").contains("not valid JSON"));

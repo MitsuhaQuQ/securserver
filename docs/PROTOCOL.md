@@ -31,6 +31,49 @@
 - 认证完成前，服务端**不发送** `LoginSuccess`，连接不会进入配置阶段或游戏阶段，满足“0 权限”
 - 本协议的 query 必须早于加载器自身的登录握手（Forge 1.18.2–1.19.4 的 `fml:loginwrapper`），没装 mod 的连接拿不到服务端的 mod 列表
 
+### 1.1 第一阶段 PSK 登录门禁
+
+基础门禁在 `trustedserver:psk` 频道执行独立的 PSK 子协议 v1。PSK 只证明客户端持有共享密钥，原版封禁与登录检查仍然有效。PSK 通过后，若 `auth.validation.ed25519=true`，继续发送本章正式协议的 ServerHello；关闭时才直接继续原版及加载器登录流程。
+
+该门禁用于 offline-mode，以及 online-mode 的 invalid-session / 会话服务不可用回退。offline-mode 没有 Mojang session 身份保证，因此基础条件是“持有服务器 PSK 且证明绑定本次登录用户名”；同一 PSK 的多个持有者仍可能尝试其他尚未声明为正版的用户名，默认开启的 Ed25519 附加层通过首次绑定与后续签名验证提供个人身份约束。Mojang session 正确的连接改走第 1.2 节账号令牌流程。
+
+```
+服务端                                      客户端
+  | <-- Challenge(type=1, server_nonce) ------ |
+  | --> ClientResponse(type=2, client_nonce, proof) |
+  | <-- ServerProof(type=3, proof) ------------ |
+  | --> Ack(type=4) --------------------------- |
+  | <-- 原版 / 加载器后续登录流程 ------------- |
+```
+
+全部消息以 `TSPK` 四字节 magic 开头，随后是一个 type：
+
+| type | 方向 | body |
+|---|---|---|
+| 1 | S→C | `server_nonce : 32 bytes` |
+| 2 | C→S | `client_nonce : 32 bytes`、`client_proof : 32 bytes` |
+| 3 | S→C | `server_proof : 32 bytes` |
+| 4 | C→S | 空 |
+| 5 | C→S | 空；本地缺少该服务器 PSK，请求一次人工输入等待 |
+
+客户端收到 type 1 后若本地没有对应服务器地址的 PSK，先返回 type 5 并弹出输入框。服务端只接受一次 type 5，重新生成 challenge，并仅把该连接的等待时间延长为密码输入超时（默认 60 秒）；第二个 type 1 的响应 future 等待玩家完成输入。输入必须是解码后正好 32 字节的单行 Base64，成功后原子写入 `psk.txt` 并继续本次登录。取消、超时、重复请求或格式错误均拒绝，不把输入内容发送到日志或断开文本。
+
+证明算法：
+
+```
+context      = ASCII("trustedserver:psk:v1") || 00 || u16be(username_utf8_length) || UTF-8(username)
+prk          = HKDF-Extract(server_nonce || client_nonce, psk)
+client_proof = HKDF-Expand(prk, ASCII("tsrv psk v1 client") || SHA-256(context), 32)
+server_proof = HKDF-Expand(prk, ASCII("tsrv psk v1 server") || SHA-256(context), 32)
+```
+
+- 用户名取登录 Hello 的原始值，严格 UTF-8；长度不得超过 65535 字节。PSK 固定为 32 字节高熵随机值，不把人类口令直接当作 PSK。服务端文件和客户端输入均拒绝明显弱值（低多样性、重复 / 连续模式、字符类别不足、常见密码与简单 Leet 变形）；该启发式检查不能证明真实熵，默认应使用服务端自动生成值
+- 双方随机数每次连接重新生成。服务端验证客户端证明后才发送服务端证明；客户端验证后才回答 Ack。证明使用常量时间比较，每个状态实例只允许一次验证
+- 客户端回答“不理解”、取消输入、任一证明错误、消息长度 / magic / type 错误或认证总超时，服务端均按未可信连接使用统一拒绝文本断开。PSK、证明和具体失败原因不得写日志
+- PSK 子协议有独立版本与频道，不改变后续正式认证协议版本号；旧客户端会因不理解 query 被拒绝
+- PSK Ack 之前服务端不得发送任何真实加载器握手、频道注册或 mod 列表。公开状态若由加载器扩展出 mod 元数据，可返回与真实列表无关、且不参与兼容性校验的诱饵项；真实列表只在 Ack 后发送
+- 已配置 PSK 与正版令牌使用独立的短超时（默认 10 秒）；只有缺少 PSK 的 mod 客户端返回一次 type 5 后，该连接才改用输入超时（默认 60 秒）。全服同时处于门禁阶段的连接数默认不超过 256，type 5 不增加额度
+
 ### 拦截未装 mod 的连接
 
 原版客户端收到不认识的 query 时会回答“不理解”（payload 为空）；不实现 login query 的机器人会一直不回应。两种情况都直接按拒绝处理：
@@ -39,6 +82,44 @@
 - 无回答：认证超时后断开
 
 断开提示使用配置的拒绝文本（默认模仿原版封禁提示）。
+
+### 1.2 online-mode 自动令牌门禁（第一阶段）
+
+服务端仅在 Mojang session 已返回正版 UUID 后进入本流程；令牌通过此时已经建立的原版加密连接发送。不得仅凭客户端自报用户名签发令牌，也不得把全服 PSK 下发给正版客户端。
+
+令牌门禁完成后与 PSK 路径相同：启用 `auth.validation.ed25519` 时继续正式认证。此时 `mojangVerified=true`，玩家设备公钥变化可按第 16 条规则改绑；关闭时直接进入原版 / 加载器后续登录。
+
+```
+服务端                                              客户端
+  | -- Challenge(server_identity, UUID, name, nonce) --> |
+  | <-- ClientProof(has_token, proof?) ----------------- |
+  |    [已有令牌且证明正确：直接放行]                    |
+  | -- Issue(token) [缺失或旧令牌时] ------------------> |
+  | <-- Ack(proof) ------------------------------------- |
+```
+
+频道为 `trustedserver:online_token`，消息 magic 为 `TSTK`：
+
+| type | 方向 | body |
+|---|---|---|
+| 1 | S→C | 服务端身份公钥 32 字节、正版 UUID 16 字节、用户名、随机 nonce 32 字节 |
+| 2 | C→S | `has_token`；为真时附 32 字节证明 |
+| 3 | S→C | 新令牌 32 字节 |
+| 4 | C→S | 32 字节签发确认证明 |
+
+令牌为 32 字节 `SecureRandom` 值。证明为：
+
+```
+context = server_identity || uuid || varstring(username) || nonce
+proof   = HKDF-Expand(token, ASCII("tsrv online token proof v1") || context, 32)
+ack     = HKDF-Expand(token, ASCII("tsrv online token ack v1")   || context, 32)
+```
+
+- 客户端按“服务器地址 + 服务端身份公钥 + 正版 UUID + 用户名”保存令牌；文件仅本人可读写
+- 服务端按正版 UUID 保存最多 8 个令牌，允许多台电脑使用。新电脑令牌缺失时凭正确 Mojang session 自动签发，不要求人工重置
+- 错误或过期令牌不会在正确 session 下锁死玩家，而是自动签发新令牌；没有正确 session 的连接不能据此要求签发
+- 首次签发 Ack 成功后，用户名被永久声明给该正版 UUID。离线 PSK 回退使用离线 UUID，且不得使用已声明的正版名字；恢复离线名字只能由控制台显式清除声明
+- session 无效或会话服务不可用时覆盖原版立即断开，切换到第 1.1 节 PSK 流程。此回退绝不继承正版 UUID、令牌或权限
 
 ### 拒绝提示的可信边界
 
@@ -339,15 +420,16 @@ notices        : string × notice_count   客户端进服后要显示的提示�
 1. 每个地址的连接频率限制，覆盖 status ping 和登录（IPv4 按单个地址，IPv6 按 /64 网段；信任网段除外）
 2. Hello 阶段检查 IP 封禁和用户名封禁（原版封禁列表并入此处）
 3. 锁定检查：账号处于密码失败锁定期，或地址处于 IP 维度的锁定期
-4. 认证总超时：默认 90 秒，可配置；同时把原版 600 tick 的登录超时放宽到不小于该值
+4. 无交互 PSK / 正版令牌门禁默认 10 秒超时；后续密码输入认证总超时默认 90 秒。同时把原版 600 tick 的登录超时放宽到不小于需要的认证总时长
 
 **共享出口（NAT）**：大量正常玩家可能共用同一个 IPv4 地址，因此 IP 维度的限制分两层：登录总量额度较宽；只有未通过可信握手的连接（没装 mod、协议错误、证明无效、握手前超时等）才消耗严格的“未验证”额度。IP 维度的密码错误锁定阈值对 IPv4 更宽、时长更短，并可整体关闭；防猜密码主要依靠账号维度的锁定。默认数值见 AGENTS.md 第 19 条。
 
 ## 8. Status Ping 脱敏
 
-- 去掉玩家样本列表（sample）
-- 在线人数可以是真实值、固定伪造值或范围内随机值
-- 旧版 Ping（1.6 及以前的格式）同样处理
+- `status.mode=normal`（默认）：去掉玩家样本列表（sample）；在线人数可以是真实值、固定伪造值或范围内随机值；保留 MOTD、favicon 与版本显示
+- `status.mode=enhanced`、`disablePing=false`：现代 Ping 返回通用 MOTD、通用版本名称、空 favicon 与空样本；`playerCount=real` 时强制显示 0，fixed/random 仍按配置；附加 ServerSeekerV2 退出标记；协议号保持真实以保证兼容判断
+- `status.mode=enhanced`、`disablePing=true`：收到现代 Ping 后直接断开且不回应；直接登录仍可进行
+- 增强模式一律关闭旧版 Ping（1.6 及以前格式），避免绕过现代响应取得真实 MOTD / 版本字段
 - 强制关闭 query 协议（`enable-query`）
 
 ## 9. 服务端存储（SQLite）
