@@ -180,7 +180,9 @@ class PlayerKeyBackupTest {
 
     @Test
     void emptyOrForeignFilesAreRejected() {
-        assertThrows(IllegalArgumentException.class, () -> PlayerKeyBackup.export(List.of(), Optional.empty(), RANDOM));
+        IllegalArgumentException empty = assertThrows(IllegalArgumentException.class,
+                () -> PlayerKeyBackup.export(List.of(), Optional.empty(), RANDOM));
+        assertTrue(empty.getMessage().contains("no keys selected"));
         assertEquals(BackupException.Kind.CORRUPTED,
                 failureKind(craftPlaintext(new WireWriter().varInt(0)), Optional.empty()));
         assertEquals(BackupException.Kind.UNSUPPORTED_FORMAT,

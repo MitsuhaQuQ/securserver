@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -42,18 +43,26 @@ final class BackupExportPasswordScreen extends Screen {
         confirm.setFormatter((text, offset) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
         addRenderableWidget(password);
         addRenderableWidget(confirm);
+        addRenderableWidget(new Checkbox(center - 150, height / 2 + 12, 300, 20,
+                Component.literal("我了解风险，允许明文导出"), plaintextConfirmed) {
+            @Override
+            public void onPress() {
+                super.onPress();
+                plaintextConfirmed = selected();
+            }
+        });
         addRenderableWidget(Button.builder(Component.literal("导出"), b -> export())
-                .bounds(center - 150, height / 2 + 48, 95, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("允许明文导出"), b -> {
-            plaintextConfirmed = !plaintextConfirmed;
-            b.setMessage(Component.literal(plaintextConfirmed ? "已确认明文风险" : "允许明文导出"));
-        }).bounds(center - 48, height / 2 + 48, 145, 20).build());
+                .bounds(center - 150, height / 2 + 58, 145, 20).build());
         addRenderableWidget(Button.builder(Component.literal("取消"), b -> onClose())
-                .bounds(center + 104, height / 2 + 48, 95, 20).build());
+                .bounds(center + 5, height / 2 + 58, 145, 20).build());
         setInitialFocus(password);
     }
 
     private void export() {
+        if (selected.isEmpty()) {
+            error = Component.literal("没有勾选要导出的认证密钥，请返回后至少选择一项");
+            return;
+        }
         String secret = password.getValue();
         if (!secret.equals(confirm.getValue())) {
             error = Component.literal("两次输入的备份密码不一致");
@@ -88,7 +97,7 @@ final class BackupExportPasswordScreen extends Screen {
                 width / 2, height / 2 - 68, 0xFF5555);
         graphics.drawString(font, "备份密码（可选）", width / 2 - 150, height / 2 - 54, 0xA0A0A0);
         graphics.drawString(font, "再次输入", width / 2 - 150, height / 2 - 26, 0xA0A0A0);
-        if (error != null) graphics.drawCenteredString(font, error, width / 2, height / 2 + 22, 0xFF5555);
+        if (error != null) graphics.drawCenteredString(font, error, width / 2, height / 2 + 40, 0xFF5555);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 }

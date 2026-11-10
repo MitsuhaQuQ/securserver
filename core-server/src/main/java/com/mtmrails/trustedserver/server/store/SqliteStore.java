@@ -83,17 +83,33 @@ public final class SqliteStore implements AutoCloseable {
         } catch (IOException e) {
             throw new StorageException("cannot create database directory for " + file, e);
         }
+        Connection connection;
         try {
-            Connection connection = new org.sqlite.JDBC().connect("jdbc:sqlite:" + file.toAbsolutePath(),
-                    new Properties());
+            connection = new org.sqlite.JDBC().connect("jdbc:sqlite:" + file.toAbsolutePath(), new Properties());
             if (connection == null) {
                 throw new StorageException("SQLite driver rejected " + file);
             }
+        } catch (SQLException e) {
+            throw new StorageException("cannot open database " + file, e);
+        }
+        try {
             SqliteStore store = new SqliteStore(connection);
             store.initialise();
             return store;
         } catch (SQLException e) {
+            closeAfterOpenFailure(connection, e);
             throw new StorageException("cannot open database " + file, e);
+        } catch (RuntimeException e) {
+            closeAfterOpenFailure(connection, e);
+            throw e;
+        }
+    }
+
+    private static void closeAfterOpenFailure(Connection connection, Throwable failure) {
+        try {
+            connection.close();
+        } catch (SQLException e) {
+            failure.addSuppressed(e);
         }
     }
 

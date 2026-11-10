@@ -59,8 +59,12 @@ public final class PlayerKeyBackup {
     }
 
     static byte[] export(List<StoredKey> keys, Optional<String> password, SecureRandom random, int iterations) {
-        if (keys.isEmpty() || keys.size() > MAX_ENTRIES) {
-            throw new IllegalArgumentException("export 1.." + MAX_ENTRIES + " keys");
+        if (keys.isEmpty()) {
+            throw new IllegalArgumentException("no keys selected for export");
+        }
+        if (keys.size() > MAX_ENTRIES) {
+            throw new IllegalArgumentException("too many keys selected for export: " + keys.size()
+                    + " (maximum " + MAX_ENTRIES + ")");
         }
         Set<KeyTarget> seen = new HashSet<>();
         WireWriter bodyWriter = new WireWriter().varInt(keys.size());

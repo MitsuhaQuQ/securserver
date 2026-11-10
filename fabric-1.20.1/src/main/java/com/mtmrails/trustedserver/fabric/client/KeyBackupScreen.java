@@ -23,6 +23,7 @@ final class KeyBackupScreen extends Screen {
     private boolean[] selected = new boolean[0];
     private int page;
     private Component status;
+    private Button exportButton;
 
     KeyBackupScreen(Screen parent, PlayerKeyBackupManager manager, String status) {
         super(Component.literal("TrustedServer 认证密钥"));
@@ -48,6 +49,7 @@ final class KeyBackupScreen extends Screen {
             Button row = Button.builder(rowLabel(index), button -> {
                 selected[index] = !selected[index];
                 button.setMessage(rowLabel(index));
+                updateExportButton();
             }).bounds(center - 190, 48 + (i - start) * 22, 380, 20).build();
             addRenderableWidget(row);
         }
@@ -70,10 +72,10 @@ final class KeyBackupScreen extends Screen {
             rebuildWidgets();
         }).bounds(center + 25, height - 76, 165, 20).build());
 
-        Button export = Button.builder(Component.literal("导出所选认证"), b -> exportSelected())
+        exportButton = Button.builder(Component.literal("导出所选认证"), b -> exportSelected())
                 .bounds(center - 190, height - 50, 120, 20).build();
-        export.active = selectedCount() > 0;
-        addRenderableWidget(export);
+        updateExportButton();
+        addRenderableWidget(exportButton);
         addRenderableWidget(Button.builder(Component.literal("导入认证"), b -> importBackup())
                 .bounds(center - 60, height - 50, 120, 20).build());
         addRenderableWidget(Button.builder(Component.literal("完成"), b -> onClose())
@@ -94,9 +96,20 @@ final class KeyBackupScreen extends Screen {
         return count;
     }
 
+    private void updateExportButton() {
+        if (exportButton != null) {
+            exportButton.active = selectedCount() > 0;
+        }
+    }
+
     private void exportSelected() {
         List<StoredKey> chosen = new ArrayList<>();
         for (int i = 0; i < keys.size(); i++) if (selected[i]) chosen.add(keys.get(i));
+        if (chosen.isEmpty()) {
+            status = Component.literal("请至少勾选一项认证密钥后再导出");
+            updateExportButton();
+            return;
+        }
         minecraft.setScreen(new BackupExportPasswordScreen(this, manager, chosen));
     }
 
