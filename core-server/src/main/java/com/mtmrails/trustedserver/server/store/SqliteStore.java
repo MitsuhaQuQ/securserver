@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * 玩家数据的 SQLite 存储（PROTOCOL.md 第 9 节）。
@@ -60,6 +62,13 @@ public final class SqliteStore implements AutoCloseable {
     });
 
     private final Connection connection;
+
+    /** 恢复事务对登录密码的处理。SET 需要非空的新 Argon2id 哈希，其余模式不得携带哈希。 */
+    public enum PasswordMutation {
+        KEEP,
+        SET,
+        CLEAR
+    }
 
     private SqliteStore(Connection connection) {
         this.connection = connection;
@@ -213,6 +222,55 @@ public final class SqliteStore implements AutoCloseable {
         }) == 1;
     }
 
+    /**
+     * 以旧公钥为比较条件，原子地提交设备改绑、登录密码变更和恢复审计。
+     * 条件不匹配（账号消失或并发连接已改绑）时不写入任何内容并返回 {@code false}。
+     */
+    public boolean recoverAccount(String id, byte[] expectedOldPub, byte[] newPub,
+            PasswordMutation passwordMutation, String newPasswordHash, long now, AuditEvent event) {
+        Objects.requireNonNull(id, "id");
+        requirePlayerKey(expectedOldPub, "expectedOldPub");
+        requirePlayerKey(newPub, "newPub");
+        Objects.requireNonNull(passwordMutation, "passwordMutation");
+        Objects.requireNonNull(event, "event");
+        if ((passwordMutation == PasswordMutation.SET) != (newPasswordHash != null && !newPasswordHash.isEmpty())) {
+            throw new IllegalArgumentException("SET requires a non-empty hash; KEEP/CLEAR must not carry one");
+        }
+        if (event != AuditEvent.ONLINE_PASSWORD_RESET && event != AuditEvent.RECOVERY_REBIND
+                && event != AuditEvent.RECOVERY_PASSWORD_RESET) {
+            throw new IllegalArgumentException("not a recovery audit event: " + event);
+        }
+        if ((event == AuditEvent.RECOVERY_REBIND) != (passwordMutation == PasswordMutation.KEEP)) {
+            throw new IllegalArgumentException("RECOVERY_REBIND must KEEP the password; reset events must change it");
+        }
+        return transaction(() -> {
+            String sql = switch (passwordMutation) {
+                case KEEP -> "UPDATE players SET player_pub = ? WHERE id = ? AND player_pub = ?";
+                case SET -> "UPDATE players SET player_pub = ?, password_hash = ?, restricted = 0"
+                        + " WHERE id = ? AND player_pub = ?";
+                case CLEAR -> "UPDATE players SET player_pub = ?, password_hash = NULL, restricted = 1"
+                        + " WHERE id = ? AND player_pub = ?";
+            };
+            int changed = update(sql, ps -> {
+                int column = 1;
+                ps.setBytes(column++, newPub);
+                if (passwordMutation == PasswordMutation.SET) {
+                    ps.setString(column++, newPasswordHash);
+                }
+                ps.setString(column++, id);
+                ps.setBytes(column, expectedOldPub);
+            });
+            if (changed == 0) {
+                return false;
+            }
+            if (passwordMutation != PasswordMutation.KEEP) {
+                clearLockout("name:" + id);
+            }
+            audit(now, id, event, null, passwordMutation.name().toLowerCase(java.util.Locale.ROOT));
+            return true;
+        });
+    }
+
     // ---------------- lockouts ----------------
 
     /** 累计失败次数加 1，返回新的次数。 */
@@ -316,6 +374,38 @@ public final class SqliteStore implements AutoCloseable {
             }
         } catch (SQLException e) {
             throw new StorageException("database query failed", e);
+        }
+    }
+
+    private <T> T transaction(Supplier<T> body) {
+        try {
+            if (!connection.getAutoCommit()) {
+                throw new StorageException("nested database transaction is not supported");
+            }
+            connection.setAutoCommit(false);
+            try {
+                T result = body.get();
+                connection.commit();
+                return result;
+            } catch (RuntimeException | Error e) {
+                try {
+                    connection.rollback();
+                } catch (SQLException rollback) {
+                    e.addSuppressed(rollback);
+                }
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new StorageException("database transaction failed", e);
+        }
+    }
+
+    private static void requirePlayerKey(byte[] key, String name) {
+        Objects.requireNonNull(key, name);
+        if (key.length != 32) {
+            throw new IllegalArgumentException(name + " must be 32 bytes");
         }
     }
 }

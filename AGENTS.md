@@ -131,4 +131,5 @@ To avoid spam and auto exploit bots.
 - Fabric 1.20.1 已接通游戏阶段 `/passwd {password} {confirmpassword}`：客户端本地拦截并通过登录阶段移交的独立加密密码通道发送，服务端完成规则校验、Argon2id 存储、审计和解除账号受限状态；密码不会进入原版命令包或聊天日志
 - 登录密码是可选附加验证：未设置密码的玩家不因此被拒绝，正常情况下只验证已绑定的 Ed25519 玩家密钥；换电脑时通过客户端密钥导出/导入迁移。只有玩家主动设置过登录密码后，后续登录才要求输入
 - `/recoverypasswd` 共用的加密传输基础已接通，但在启用对应验证配置前仍需完成其独立功能验收
-- 正式认证协议已升级到 v3：`PasswordAnswer` 使用显式 `SUBMIT / SKIP / REQUEST_RESET / CLEAR` 动作，`PasswordRequest` 增加 `RESET`；HKDF、签名和隧道 AAD 域标签同步为 `tsrv v3`，旧 v2 密码回答严格拒绝。原子恢复事务与状态机触发仍是下一阶段
+- 正式认证协议已升级到 v3：`PasswordAnswer` 使用显式 `SUBMIT / SKIP / REQUEST_RESET / CLEAR` 动作，`PasswordRequest` 增加 `RESET`；HKDF、签名和隧道 AAD 域标签同步为 `tsrv v3`，旧 v2 密码回答严格拒绝
+- SQLite 已实现恢复事务：以旧公钥比较并交换，在同一事务中完成设备改绑、登录密码保留 / 设置 / 清除、重设后的锁定清理和恢复审计；审计失败会回滚账号变更。状态机签发 `ResetGrant` 与界面触发仍是下一阶段

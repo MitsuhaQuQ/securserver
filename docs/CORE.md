@@ -202,6 +202,7 @@ public final class SecureMessageChannel {
 - 公钥不一致时：本连接通过 Mojang 验证（`mojangVerified`）可按普通新设备流程改绑（`RebindReason.ONLINE_MODE_IDENTITY`），否则须输对找回密码（`RebindReason.RECOVERY`）。`mojangVerified` 与 `onlineMode` 分开传入：正版服务器上 session 无效的连接 `onlineMode = true`、`mojangVerified = false`，按无验证回退
 - 密码重设新增内存态 `ResetGrant`：正版 session + 原绑定公钥一致，或新设备找回密码验证正确时建立；绑定账号、旧/新公钥、transcript 与连接，60 秒或一次使用后失效。它不是客户端可保存的令牌
 - 找回密码正确后可保留原登录密码继续验证，也可进入 RESET 设置新密码或清除密码。新设备场景使用存储层事务 `recoverAccount(expectedOldPub, newPub, passwordChange)`，以旧公钥为条件原子提交改绑与密码变更；并发更新失败返回 `ACCOUNT_CONFLICT`
+- `SqliteStore.recoverAccount` 已实现上述比较并交换事务，并把密码重设后的锁定清理与恢复审计纳入同一提交；账号更新条数为 0 时不写审计，审计写入失败时回滚账号与锁定变更
 - 正版快速重设必须在任何自动改绑之前检查原绑定公钥一致；新设备仅有正版 session 时仍须原登录密码，不能先改绑后重设
 - `Accepted.reboundBy` 记录本次改绑原因，Finish 下发 `rebindNotice` 提示。恢复审计区分 `online_password_reset`、`recovery_rebind` 与 `recovery_password_reset`
 - 账号存在但绑定已被管理员清空时（`AccountView.keyBound()` 为假），按 `RebindReason.KEY_RESET` 处理：已设登录密码则先验证，再用 `claimUnboundKey` 原子绑定，被抢先时按 `ACCOUNT_CONFLICT` 拒绝

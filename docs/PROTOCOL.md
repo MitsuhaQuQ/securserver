@@ -340,7 +340,7 @@ password       : string   最多 128 个 Unicode 码点（UTF-8 最多 512 字�
   - SET + SKIP：保持受限，进入 Finish
   - LOGIN / RECOVERY 错误：失败计数加 1，`attempts_left > 0` 时重发请求，否则锁定并断开
 
-`action` 字段与 RESET kind 自协议 v3 起启用；旧客户端不得把带 action 的消息按旧 PasswordAnswer 解码。恢复事务在后续实现阶段接入。
+`action` 字段与 RESET kind 自协议 v3 起启用；旧客户端不得把带 action 的消息按旧 PasswordAnswer 解码。SQLite 原子恢复事务已实现，状态机授权与触发在后续阶段接入。
 
 ### 4.8.1 一次性密码重设授权
 

@@ -127,4 +127,67 @@ class SqliteStoreTest {
             assertTrue(store.insertNew("steve", "Steve", new byte[32], 1));
         }
     }
+
+    @Test
+    void recoveryTransactionComparesOldKeyAndAppliesPasswordMutation() {
+        byte[] oldKey = key(1);
+        try (SqliteStore store = SqliteStore.open(db())) {
+            assertTrue(store.insertNew("steve", "Steve", oldKey, 1));
+            assertTrue(store.setPasswordHash("steve", "old-hash"));
+
+            assertFalse(store.recoverAccount("steve", key(9), key(2), SqliteStore.PasswordMutation.SET,
+                    "attacker-hash", 10, AuditEvent.RECOVERY_PASSWORD_RESET));
+            assertArrayEquals(oldKey, store.find("steve").orElseThrow().playerPub());
+            assertEquals("old-hash", store.find("steve").orElseThrow().passwordHash());
+            assertEquals(List.of(), store.auditFor("steve"));
+
+            assertTrue(store.recoverAccount("steve", oldKey, key(2), SqliteStore.PasswordMutation.KEEP,
+                    null, 20, AuditEvent.RECOVERY_REBIND));
+            assertArrayEquals(key(2), store.find("steve").orElseThrow().playerPub());
+            assertEquals("old-hash", store.find("steve").orElseThrow().passwordHash());
+
+            store.addFailure("name:steve");
+            store.lockUntil("name:steve", 9999);
+            assertTrue(store.recoverAccount("steve", key(2), key(3), SqliteStore.PasswordMutation.SET,
+                    "new-hash", 30, AuditEvent.RECOVERY_PASSWORD_RESET));
+            assertEquals("new-hash", store.find("steve").orElseThrow().passwordHash());
+            assertFalse(store.find("steve").orElseThrow().restricted());
+            assertEquals(0, store.failures("name:steve"));
+            assertEquals(Optional.empty(), store.lockedUntil("name:steve"));
+
+            assertTrue(store.recoverAccount("steve", key(3), key(4), SqliteStore.PasswordMutation.CLEAR,
+                    null, 40, AuditEvent.ONLINE_PASSWORD_RESET));
+            Account cleared = store.find("steve").orElseThrow();
+            assertArrayEquals(key(4), cleared.playerPub());
+            assertNull(cleared.passwordHash());
+            assertTrue(cleared.restricted());
+            assertEquals(List.of("recovery_rebind", "recovery_password_reset", "online_password_reset"),
+                    store.auditFor("steve").stream().map(AuditRecord::event).toList());
+            assertThrows(IllegalArgumentException.class, () -> store.recoverAccount("steve", key(4), key(5),
+                    SqliteStore.PasswordMutation.KEEP, null, 50, AuditEvent.ONLINE_PASSWORD_RESET));
+        }
+    }
+
+    @Test
+    void recoveryTransactionRollsBackAccountWhenAuditFails() throws Exception {
+        byte[] oldKey = key(1);
+        try (SqliteStore store = SqliteStore.open(db())) {
+            assertTrue(store.insertNew("steve", "Steve", oldKey, 1));
+            try (Connection raw = new org.sqlite.JDBC().connect("jdbc:sqlite:" + db().toAbsolutePath(),
+                    new Properties()); Statement st = raw.createStatement()) {
+                st.execute("CREATE TRIGGER reject_recovery_audit BEFORE INSERT ON audit_log "
+                        + "WHEN NEW.event = 'recovery_rebind' BEGIN SELECT RAISE(ABORT, 'test'); END");
+            }
+            assertThrows(StorageException.class, () -> store.recoverAccount("steve", oldKey, key(2),
+                    SqliteStore.PasswordMutation.KEEP, null, 20, AuditEvent.RECOVERY_REBIND));
+            assertArrayEquals(oldKey, store.find("steve").orElseThrow().playerPub());
+            assertTrue(store.auditFor("steve").isEmpty());
+        }
+    }
+
+    private static byte[] key(int firstByte) {
+        byte[] key = new byte[32];
+        key[0] = (byte) firstByte;
+        return key;
+    }
 }
