@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build and test every supported target
+        run: |
+          chmod +x gradlew
+          ./gradlew clean build
+
+      - name: Collect release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+          for minecraft in 1.20.1 1.20.2 1.20.4 1.21.1; do
+            jar="fabric-${minecraft}/build/libs/trustedserver-fabric-${minecraft}-${version}.jar"
+            test -f "${jar}"
+            cp "${jar}" release-assets/
+          done
+          (cd release-assets && sha256sum *.jar > SHA256SUMS.txt)
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          notes="docs/releases/${version}.md"
+          if [[ -f "${notes}" ]]; then
+            gh release create "${GITHUB_REF_NAME}" release-assets/* \
+              --title "TrustedServer ${GITHUB_REF_NAME}" \
+              --notes-file "${notes}"
+          else
+            gh release create "${GITHUB_REF_NAME}" release-assets/* \
+              --title "TrustedServer ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

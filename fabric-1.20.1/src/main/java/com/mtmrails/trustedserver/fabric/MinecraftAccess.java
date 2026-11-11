@@ -5,6 +5,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import net.minecraft.network.Connection;
+import io.netty.channel.Channel;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.resources.ResourceLocation;
@@ -39,6 +40,15 @@ public final class MinecraftAccess {
             return (Connection) field.get(listener);
         } catch (IllegalAccessException e) {
             throw new IllegalStateException("cannot access Minecraft connection", e);
+        }
+    }
+
+    public static Channel nettyChannel(Connection connection) {
+        Field field = findField(connection.getClass(), Channel.class);
+        try {
+            return (Channel) field.get(connection);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("cannot access Minecraft Netty channel", e);
         }
     }
 

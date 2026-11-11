@@ -2,7 +2,7 @@
 
 面向 Minecraft Java 独立服务器的客户端/服务端安全 mod。TrustedServer 在玩家进入游戏前增加可信握手、身份绑定、密码恢复和网络限流，用于减少通用扫描器、自动登录机器人和批量漏洞利用脚本带来的风险，同时隐藏服务器列表中的玩家名称。
 
-> `v0.2.0` 提供 Fabric 1.20.1、1.20.2、1.20.4、1.21.1 构建。客户端和服务端都必须安装本 mod；未安装客户端 mod 的连接会被拒绝。本项目仍在开发中，不建议在没有备份和测试的情况下直接用于生产服务器。
+> `v0.3.0` 提供 Fabric 1.20.1、1.20.2、1.20.4、1.21.1 构建。客户端和服务端都必须安装本 mod；未安装客户端 mod 的连接会被拒绝。本项目仍在开发中，不建议在没有备份和测试的情况下直接用于生产服务器。
 
 ## 功能概览
 
@@ -17,6 +17,7 @@
 - 提供登录、未验证连接、服务器列表 Ping、密码错误和全服待认证连接的限流与锁定。
 - 玩家数据存入 SQLite，密码使用 Argon2id；认证、恢复、重置和拒绝事件写入审计记录。
 - 客户端可通过 Mod Menu 导出、导入 Ed25519 认证密钥，便于迁移电脑。
+- 客户端界面支持简体中文、繁体中文、日语和英语，并跟随 Minecraft 语言设置切换。
 
 ## 当前支持状态
 
@@ -38,7 +39,7 @@
 - 其他认证 mod 共存；
 - 客户端内置服务器及局域网开放的单人游戏。
 
-高安全隧道的核心编解码已经存在，但 Fabric 适配层尚未启用整条 Minecraft 连接的隧道传输。当前默认只加密认证和密码通道，原版游戏连接保持不变。
+高安全隧道已接入 Fabric 1.20.1、1.20.2、1.20.4 和 1.21.1。隧道在 FinishAck 后接管整条连接：离线模式新增 AES-256-GCM 传输层，正版模式替换原版 AES-CFB8；Minecraft 分帧、压缩和游戏包都位于隧道内部。默认客户端不主动请求，服务端可选择 `disabled`、`optional` 或 `required`。
 
 ## 工作原理
 
@@ -127,6 +128,8 @@ mc.example.com:25566 <另一台服务器的 Base64 密钥>
 
 以下命令必须由安装了 TrustedServer 的客户端输入。密码不能包含空格，默认长度为 6–128 个 Unicode 码点。
 
+客户端会把 `/passwd` 与 `/recoverypasswd` 注册到本地命令树，可使用 Tab 自动补全命令名。密码参数不会提供候选值，也不会发送到原版服务端命令系统。
+
 | 命令 | 作用 |
 |---|---|
 | `/passwd <密码> <确认密码>` | 设置或替换登录密码。两次输入必须一致；设置成功后立即解除新用户受限状态。默认不要求输入旧密码。 |
@@ -186,11 +189,24 @@ mc.example.com:25566 <另一台服务器的 Base64 密钥>
 | 路径 | 内容 |
 |---|---|
 | `config/trustedserver/psk.txt` | 服务器地址到 PSK 的映射。 |
+| `config/trustedserver/client.json` | 客户端设置；`wantTunnel=true` 时主动请求 optional 隧道。 |
 | `config/trustedserver/online_tokens.txt` | 正版账号令牌。 |
 | `config/trustedserver/known_servers.txt` | TOFU 记录的服务端身份公钥。 |
 | `config/trustedserver/keys/` | 按服务端身份和用户名保存的玩家 Ed25519 密钥。 |
 
 客户端密钥备份只包含玩家 Ed25519 认证密钥，不包含登录密码、找回密码、PSK 或服务端私钥。可在 Mod Menu → TrustedServer 中选择导出范围，并选择使用 PBKDF2-HMAC-SHA256 + AES-256-GCM 加密备份。明文导出的文件可被持有者用于冒充玩家，请妥善保管。
+
+### 多语言
+
+内置 `zh_cn`、`zh_tw`、`ja_jp` 和 `en_us`。界面、客户端本地错误、内置通知和断开原因使用 Minecraft 标准翻译键；服主在配置中填写的 MOTD、公告与自定义拒绝文本保持原样。新增语言时复制 `fabric-1.20.1/src/main/resources/assets/trustedserver/lang/en_us.json`，以 Minecraft 语言代码命名并翻译值即可；测试会检查各语言的键和格式化参数是否完整一致。
+
+### 高安全隧道
+
+- `server.json` 的 `auth.tunnel=disabled`：始终保持原版游戏传输，仅认证与密码通道加密；
+- `auth.tunnel=optional`：只有客户端 `client.json` 设置 `wantTunnel=true` 时启用；
+- `auth.tunnel=required`：通过正式 Ed25519 握手的客户端必须启用，不受客户端偏好影响。
+
+隧道验证失败、帧乱序、重放、长度异常或连接截断时会立即关闭连接，不会降级回明文。隧道依赖 `auth.validation.ed25519=true`；非法配置会使服务端拒绝启动。
 
 ## 构建
 

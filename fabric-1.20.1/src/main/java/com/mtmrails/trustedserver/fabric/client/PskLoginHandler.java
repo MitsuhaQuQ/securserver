@@ -57,11 +57,11 @@ final class PskLoginHandler {
             if (type == PskWire.Type.SERVER_PROOF) {
                 return CompletableFuture.completedFuture(onServerProof(handler, payload));
             }
-            return fail(handler, "服务器发送了错误的 PSK 消息顺序。");
+            return fail(handler, Component.translatable("trustedserver.disconnect.psk_sequence"));
         } catch (IOException e) {
-            return fail(handler, "无法读取 config/trustedserver/psk.txt：" + e.getMessage());
+            return fail(handler, Component.translatable("trustedserver.disconnect.psk_file"));
         } catch (MalformedMessageException | PskAuthenticationException | IllegalArgumentException e) {
-            return fail(handler, "PSK 验证失败，服务器密钥可能不匹配。");
+            return fail(handler, Component.translatable("trustedserver.disconnect.psk_verification"));
         }
     }
 
@@ -89,7 +89,7 @@ final class PskLoginHandler {
                     key = null; // future 接管并在生成证明后清零
                     return Optional.empty();
                 } catch (IOException | IllegalArgumentException e) {
-                    return Optional.of(Component.literal(e.getMessage()));
+                    return Optional.of(Component.translatable("trustedserver.psk.error.invalid"));
                 } finally {
                     if (key != null) {
                         Arrays.fill(key, (byte) 0);
@@ -113,12 +113,12 @@ final class PskLoginHandler {
         return selected.key().handle((key, error) -> {
             prompts.remove(handler, selected);
             if (error != null) {
-                return failNow(handler, "已取消输入 TrustedServer PSK。");
+                return failNow(handler, Component.translatable("trustedserver.disconnect.psk_cancelled"));
             }
             try {
                 return beginResponse(minecraft, handler, payload, key);
             } catch (MalformedMessageException | IllegalArgumentException e) {
-                return failNow(handler, "PSK 验证失败，服务器密钥可能不匹配。");
+                return failNow(handler, Component.translatable("trustedserver.disconnect.psk_verification"));
             }
         });
     }
@@ -149,14 +149,14 @@ final class PskLoginHandler {
         }
     }
 
-    private CompletableFuture<FriendlyByteBuf> fail(ClientHandshakePacketListenerImpl handler, String message) {
+    private CompletableFuture<FriendlyByteBuf> fail(ClientHandshakePacketListenerImpl handler, Component message) {
         return CompletableFuture.completedFuture(failNow(handler, message));
     }
 
-    private FriendlyByteBuf failNow(ClientHandshakePacketListenerImpl handler, String message) {
+    private FriendlyByteBuf failNow(ClientHandshakePacketListenerImpl handler, Component message) {
         close(handler);
-        TrustedServerFabric.LOGGER.warn("TrustedServer PSK gate failed locally: {}", message);
-        ClientLoginHandler.connection(handler).disconnect(Component.literal(message));
+        TrustedServerFabric.LOGGER.warn("TrustedServer PSK gate failed locally: {}", message.getString());
+        ClientLoginHandler.connection(handler).disconnect(message);
         return null;
     }
 

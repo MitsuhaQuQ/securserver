@@ -27,7 +27,7 @@ final class PasswordPromptScreen extends Screen {
 
     PasswordPromptScreen(Screen parent, PasswordRequest request,
             CompletableFuture<Optional<PasswordAnswer>> result) {
-        super(Component.literal(titleFor(request.kind())));
+        super(titleFor(request.kind()));
         this.parent = parent;
         this.request = request;
         this.result = result;
@@ -39,39 +39,45 @@ final class PasswordPromptScreen extends Screen {
         int center = width / 2;
         if (confirmingClear) {
             int buttonY = height / 2 + 42;
-            addRenderableWidget(Button.builder(Component.literal("确认清除"),
+            addRenderableWidget(Button.builder(Component.translatable("trustedserver.button.confirm_clear"),
                     b -> finish(Optional.of(PasswordAnswer.clear()), true))
                     .bounds(center - 105, buttonY, 100, 20).build());
-            addRenderableWidget(Button.builder(Component.literal("返回"), b -> showClearConfirmation(false))
+            addRenderableWidget(Button.builder(Component.translatable("gui.back"), b -> showClearConfirmation(false))
                     .bounds(center + 5, buttonY, 100, 20).build());
             return;
         }
         int firstY = hasConfirmation() ? height / 2 - 34 : height / 2 - 20;
-        password = new EditBox(font, center - 150, firstY, 300, 20, Component.literal("密码"));
+        password = new EditBox(font, center - 150, firstY, 300, 20,
+                Component.translatable("trustedserver.field.password"));
         password.setMaxLength(256);
         mask(password);
         addRenderableWidget(password);
         if (hasConfirmation()) {
-            confirm = new EditBox(font, center - 150, firstY + 28, 300, 20, Component.literal("确认密码"));
+            confirm = new EditBox(font, center - 150, firstY + 28, 300, 20,
+                    Component.translatable("trustedserver.field.confirm_password"));
             confirm.setMaxLength(256);
             mask(confirm);
             addRenderableWidget(confirm);
         }
 
         int buttonY = height / 2 + 42;
-        addRenderableWidget(Button.builder(Component.literal(submitLabel(request.kind())), b -> submit())
+        addRenderableWidget(Button.builder(submitLabel(request.kind()), b -> submit())
                 .bounds(center - 150, buttonY, 95, 20).build());
         if (hasConfirmation()) {
-            String alternate = request.kind() == PasswordRequest.Kind.SET ? "跳过" : "清除密码";
-            addRenderableWidget(Button.builder(Component.literal(alternate), b -> alternateAction())
+            Component alternate = request.kind() == PasswordRequest.Kind.SET
+                    ? Component.translatable("trustedserver.button.skip")
+                    : Component.translatable("trustedserver.button.clear_password");
+            addRenderableWidget(Button.builder(alternate, b -> alternateAction())
                     .bounds(center - 48, buttonY, 95, 20).build());
         } else if (request.kind() == PasswordRequest.Kind.LOGIN
                 || request.kind() == PasswordRequest.Kind.RECOVERY) {
-            String alternate = request.kind() == PasswordRequest.Kind.LOGIN ? "忘记密码" : "验证并重设";
-            addRenderableWidget(Button.builder(Component.literal(alternate), b -> requestReset())
+            Component alternate = request.kind() == PasswordRequest.Kind.LOGIN
+                    ? Component.translatable("trustedserver.button.forgot_password")
+                    : Component.translatable("trustedserver.button.verify_and_reset");
+            addRenderableWidget(Button.builder(alternate, b -> requestReset())
                     .bounds(center - 48, buttonY, 95, 20).build());
         }
-        addRenderableWidget(Button.builder(Component.literal("取消"), b -> onClose())
+        addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose())
                 .bounds(center + 54,
                         buttonY, 95, 20).build());
         setInitialFocus(password);
@@ -85,11 +91,11 @@ final class PasswordPromptScreen extends Screen {
     private void submit() {
         String secret = password.getValue();
         if (secret.isEmpty()) {
-            error = Component.literal("密码不能为空");
+            error = Component.translatable("trustedserver.error.password_empty");
             return;
         }
         if (hasConfirmation() && !secret.equals(confirm.getValue())) {
-            error = Component.literal("两次输入的密码不一致");
+            error = Component.translatable("trustedserver.error.password_mismatch");
             return;
         }
         finish(Optional.of(new PasswordAnswer(secret)), true);
@@ -115,7 +121,7 @@ final class PasswordPromptScreen extends Screen {
     private void requestReset() {
         String secret = request.kind() == PasswordRequest.Kind.RECOVERY ? password.getValue() : "";
         if (request.kind() == PasswordRequest.Kind.RECOVERY && secret.isEmpty()) {
-            error = Component.literal("找回密码不能为空");
+            error = Component.translatable("trustedserver.error.recovery_password_empty");
             return;
         }
         finish(Optional.of(new PasswordAnswer(PasswordAnswer.Action.REQUEST_RESET, secret)), true);
@@ -133,7 +139,7 @@ final class PasswordPromptScreen extends Screen {
     @Override
     public void tick() {
         if (Util.getMillis() >= deadlineMillis) {
-            error = Component.literal("输入已超时");
+            error = Component.translatable("trustedserver.error.input_timeout");
             finish(Optional.empty(), true);
         }
     }
@@ -164,44 +170,46 @@ final class PasswordPromptScreen extends Screen {
         graphics.fill(0, 0, width, height, 0xC0101010);
         int remaining = (int) Math.max(0, (deadlineMillis - Util.getMillis() + 999) / 1000);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 88, 0xFFFFFF);
-        String description = confirmingClear ? "确认后将移除本账号的登录密码" : descriptionFor(request.kind());
-        graphics.drawCenteredString(font, Component.literal(description),
+        Component description = confirmingClear
+                ? Component.translatable("trustedserver.password.description.confirm_clear")
+                : descriptionFor(request.kind());
+        graphics.drawCenteredString(font, description,
                 width / 2, height / 2 - 68, 0xA0A0A0);
         if (!hasConfirmation()) {
             graphics.drawCenteredString(font,
-                    Component.literal("剩余尝试次数：" + request.attemptsLeft()),
+                    Component.translatable("trustedserver.password.attempts_left", request.attemptsLeft()),
                     width / 2, height / 2 - 50, 0xFFFF55);
         }
-        graphics.drawString(font, "剩余时间：" + remaining + " 秒", width / 2 - 150,
+        graphics.drawString(font, Component.translatable("trustedserver.password.time_left", remaining), width / 2 - 150,
                 hasConfirmation() ? height / 2 - 50 : height / 2 - 36, 0xA0A0A0);
         if (error != null) graphics.drawCenteredString(font, error, width / 2, height / 2 + 20, 0xFF5555);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
-    private static String titleFor(PasswordRequest.Kind kind) {
+    private static Component titleFor(PasswordRequest.Kind kind) {
         return switch (kind) {
-            case LOGIN -> "TrustedServer 登录密码";
-            case RECOVERY -> "TrustedServer 找回认证";
-            case SET -> "设置 TrustedServer 登录密码";
-            case RESET -> "重设 TrustedServer 登录密码";
+            case LOGIN -> Component.translatable("trustedserver.password.title.login");
+            case RECOVERY -> Component.translatable("trustedserver.password.title.recovery");
+            case SET -> Component.translatable("trustedserver.password.title.set");
+            case RESET -> Component.translatable("trustedserver.password.title.reset");
         };
     }
 
-    private static String descriptionFor(PasswordRequest.Kind kind) {
+    private static Component descriptionFor(PasswordRequest.Kind kind) {
         return switch (kind) {
-            case LOGIN -> "输入此服务器账号的登录密码";
-            case RECOVERY -> "验证后可将认证绑定更新为这台电脑";
-            case SET -> "新账号可现在设置密码，也可以跳过";
-            case RESET -> "设置新密码，或明确选择清除登录密码";
+            case LOGIN -> Component.translatable("trustedserver.password.description.login");
+            case RECOVERY -> Component.translatable("trustedserver.password.description.recovery");
+            case SET -> Component.translatable("trustedserver.password.description.set");
+            case RESET -> Component.translatable("trustedserver.password.description.reset");
         };
     }
 
-    private static String submitLabel(PasswordRequest.Kind kind) {
+    private static Component submitLabel(PasswordRequest.Kind kind) {
         return switch (kind) {
-            case LOGIN -> "登录";
-            case RECOVERY -> "保留登录密码";
-            case SET -> "设置密码";
-            case RESET -> "重设密码";
+            case LOGIN -> Component.translatable("trustedserver.button.login");
+            case RECOVERY -> Component.translatable("trustedserver.button.keep_password");
+            case SET -> Component.translatable("trustedserver.button.set_password");
+            case RESET -> Component.translatable("trustedserver.button.reset_password");
         };
     }
 

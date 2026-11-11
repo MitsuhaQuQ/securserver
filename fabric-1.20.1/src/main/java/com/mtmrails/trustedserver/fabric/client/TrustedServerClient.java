@@ -18,8 +18,10 @@ public final class TrustedServerClient implements ClientModInitializer {
     public void onInitializeClient() {
         Path dataDir = FabricLoader.getInstance().getConfigDir().resolve("trustedserver");
         PresharedKeys keys = new PresharedKeys(dataDir.resolve("psk.txt"));
+        ClientTunnelConfig tunnelConfig;
         try {
             keys.createTemplateIfMissing();
+            tunnelConfig = ClientTunnelConfig.loadOrCreate(dataDir.resolve("client.json"));
         } catch (IOException e) {
             throw new IllegalStateException("Cannot create TrustedServer PSK configuration", e);
         }
@@ -27,9 +29,10 @@ public final class TrustedServerClient implements ClientModInitializer {
         new OnlineTokenLoginHandler(new OnlineTokens(dataDir.resolve("online_tokens.txt"))).register();
         FabricClientEnvironment environment = new FabricClientEnvironment(dataDir);
         backups = new PlayerKeyBackupManager(environment.keyStore(), new SecureRandom());
-        new ClientLoginHandler(environment).register();
+        new ClientLoginHandler(environment, tunnelConfig.wantTunnel()).register();
         TrustedServerFabric.LOGGER.info(
-                "TrustedServer client ready (PSK / online token gate + Ed25519 player authentication)");
+                "TrustedServer client ready (PSK / online token gate + Ed25519 player authentication; tunnel={})",
+                tunnelConfig.wantTunnel() ? "requested" : "server-required only");
     }
 
     static PlayerKeyBackupManager backups() {

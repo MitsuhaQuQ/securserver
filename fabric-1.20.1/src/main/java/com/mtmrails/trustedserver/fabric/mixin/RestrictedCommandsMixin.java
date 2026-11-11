@@ -22,7 +22,7 @@ abstract class RestrictedCommandsMixin {
         TrustedServerRuntime runtime = TrustedServerRuntime.get();
         CommandSourceStack source = command.getContext().getSource();
         if (runtime != null && source.getEntity() instanceof ServerPlayer player && runtime.restricted(player)) {
-            source.sendFailure(Component.literal("请先使用 /passwd 设置登录密码，以解除指令限制"));
+            source.sendFailure(Component.translatable("trustedserver.command.restricted"));
             cir.setReturnValue(0);
         }
     }

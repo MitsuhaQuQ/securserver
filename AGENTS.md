@@ -136,3 +136,6 @@ To avoid spam and auto exploit bots.
 - SQLite 已实现恢复事务：以旧公钥比较并交换，在同一事务中完成设备改绑、登录密码保留 / 设置 / 清除、重设后的锁定清理和恢复审计；审计失败会回滚账号变更
 - `ResetGrant` 状态机与 Fabric 登录界面已接通：正版 session + 原绑定密钥可快速重设；offline / invalid-session 及正版新设备必须先验证找回密码。授权绑定当前会话、旧/新公钥和 transcript，60 秒失效；“设置新密码”与“明确清除密码”最终调用原子事务
 - Fabric 1.20.1 已执行新用户生存模式及指令限制。设置登录密码后立即刷新指令树和有效权限。OP 暂停按连接生效，原版 OP 名单继续由管理员管理
+- Fabric 1.20.1–1.21.1 已接入整连接安全隧道：客户端 FinishAck 仍走旧传输，随后原子安装 AES-256-GCM 字节流处理器；服务端验证 FinishAck 后、释放后续登录 query 前安装。offline 新增隧道层，online 替换原版 AES-CFB8；支持 disabled / optional / required，客户端通过 `client.json` 的 `wantTunnel` 请求 optional 模式
+- Fabric 客户端界面与内置反馈已使用 Minecraft 标准 i18n 资源，内置简体中文、繁体中文、日语和英语；新增语言只需补充同键集合的 `assets/trustedserver/lang/<语言>.json`
+- `/passwd` 与 `/recoverypasswd` 已注册为 Fabric 客户端命令，可自动补全命令名；参数仍由本地安全解析器处理，不提供密码候选、不进入服务端命令包或聊天历史

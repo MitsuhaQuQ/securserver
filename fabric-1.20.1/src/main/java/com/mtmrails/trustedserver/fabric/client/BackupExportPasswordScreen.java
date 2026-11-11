@@ -9,6 +9,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.FormattedCharSequence;
@@ -25,7 +26,7 @@ final class BackupExportPasswordScreen extends Screen {
     private Component error;
 
     BackupExportPasswordScreen(KeyBackupScreen parent, PlayerKeyBackupManager manager, List<StoredKey> selected) {
-        super(Component.literal("导出认证密钥"));
+        super(Component.translatable("trustedserver.backup.export.title"));
         this.parent = parent;
         this.manager = manager;
         this.selected = List.copyOf(selected);
@@ -34,8 +35,10 @@ final class BackupExportPasswordScreen extends Screen {
     @Override
     protected void init() {
         int center = width / 2;
-        password = new EditBox(font, center - 150, height / 2 - 42, 300, 20, Component.literal("备份密码"));
-        confirm = new EditBox(font, center - 150, height / 2 - 14, 300, 20, Component.literal("确认密码"));
+        password = new EditBox(font, center - 150, height / 2 - 42, 300, 20,
+                Component.translatable("trustedserver.backup.field.password"));
+        confirm = new EditBox(font, center - 150, height / 2 - 14, 300, 20,
+                Component.translatable("trustedserver.field.confirm_password"));
         password.setMaxLength(256);
         confirm.setMaxLength(256);
         password.setFormatter((text, offset) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
@@ -43,38 +46,39 @@ final class BackupExportPasswordScreen extends Screen {
         addRenderableWidget(password);
         addRenderableWidget(confirm);
         addRenderableWidget(new RiskCheckbox(center - 150, height / 2 + 12, 300,
-                Component.literal("我了解风险，允许明文导出"), font, plaintextConfirmed,
+                Component.translatable("trustedserver.backup.allow_plaintext"), font, plaintextConfirmed,
                 selected -> plaintextConfirmed = selected));
-        addRenderableWidget(Button.builder(Component.literal("导出"), b -> export())
+        addRenderableWidget(Button.builder(Component.translatable("trustedserver.button.export"), b -> export())
                 .bounds(center - 150, height / 2 + 58, 145, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("取消"), b -> onClose())
+        addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose())
                 .bounds(center + 5, height / 2 + 58, 145, 20).build());
         setInitialFocus(password);
     }
 
     private void export() {
         if (selected.isEmpty()) {
-            error = Component.literal("没有勾选要导出的认证密钥，请返回后至少选择一项");
+            error = Component.translatable("trustedserver.backup.error.select_one");
             return;
         }
         String secret = password.getValue();
         if (!secret.equals(confirm.getValue())) {
-            error = Component.literal("两次输入的备份密码不一致");
+            error = Component.translatable("trustedserver.backup.error.password_mismatch");
             return;
         }
         if (secret.isEmpty() && !plaintextConfirmed) {
-            error = Component.literal("明文导出前必须明确确认风险");
+            error = Component.translatable("trustedserver.backup.error.confirm_plaintext");
             return;
         }
-        String chosen = TinyFileDialogs.tinyfd_saveFileDialog("导出 TrustedServer 认证",
-                "trustedserver-keys.tskb", null, "TrustedServer key backup");
+        String chosen = TinyFileDialogs.tinyfd_saveFileDialog(
+                I18n.get("trustedserver.backup.dialog.export"), "trustedserver-keys.tskb", null,
+                I18n.get("trustedserver.backup.dialog.filter"));
         if (chosen == null) return;
         try {
             manager.export(Path.of(chosen), selected, secret.isEmpty() ? Optional.empty() : Optional.of(secret));
             minecraft.setScreen(new KeyBackupScreen(parent.rootParent(), manager,
-                    "已导出 " + selected.size() + " 份认证密钥"));
+                    Component.translatable("trustedserver.backup.export.success", selected.size())));
         } catch (Exception e) {
-            error = Component.literal("导出失败：" + e.getMessage());
+            error = Component.translatable("trustedserver.backup.error.export", e.getMessage());
         }
     }
 
@@ -87,10 +91,12 @@ final class BackupExportPasswordScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, 0xC0101010);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 90, 0xFFFFFF);
-        graphics.drawCenteredString(font, Component.literal("密码可留空，但拿到明文文件的人可以冒充你登录这些服务器"),
+        graphics.drawCenteredString(font, Component.translatable("trustedserver.backup.plaintext_warning"),
                 width / 2, height / 2 - 68, 0xFF5555);
-        graphics.drawString(font, "备份密码（可选）", width / 2 - 150, height / 2 - 54, 0xA0A0A0);
-        graphics.drawString(font, "再次输入", width / 2 - 150, height / 2 - 26, 0xA0A0A0);
+        graphics.drawString(font, Component.translatable("trustedserver.backup.password_optional"),
+                width / 2 - 150, height / 2 - 54, 0xA0A0A0);
+        graphics.drawString(font, Component.translatable("trustedserver.field.enter_again"),
+                width / 2 - 150, height / 2 - 26, 0xA0A0A0);
         if (error != null) graphics.drawCenteredString(font, error, width / 2, height / 2 + 40, 0xFF5555);
         super.render(graphics, mouseX, mouseY, partialTick);
     }

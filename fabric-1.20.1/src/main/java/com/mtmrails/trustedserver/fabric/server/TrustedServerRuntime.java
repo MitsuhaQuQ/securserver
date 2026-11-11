@@ -99,20 +99,8 @@ public final class TrustedServerRuntime {
             thread.setDaemon(true);
             return thread;
         });
-        ServerAuthConfig auth = config.auth();
-        if (auth.tunnelPolicy() != ServerAuthConfig.TunnelPolicy.DISABLED) {
-            if (auth.tunnelPolicy() == ServerAuthConfig.TunnelPolicy.REQUIRED) {
-                TrustedServerFabric.LOGGER.warn("auth.tunnel = required is not supported yet in this version; "
-                        + "tunnel mode is disabled");
-            } else {
-                TrustedServerFabric.LOGGER.info("Tunnel mode is not available yet in this version; "
-                        + "authentication is still encrypted");
-            }
-            auth = new ServerAuthConfig(ServerAuthConfig.TunnelPolicy.DISABLED, auth.validation(),
-                    auth.maxPasswordAttempts(),
-                    auth.passwordTimeoutSec(), auth.restrictedNotice(), auth.recoveryReminderNotice(), auth.rebindNotice());
-        }
-        this.authConfig = auth;
+        this.authConfig = config.auth();
+        TrustedServerFabric.LOGGER.info("Full-connection tunnel policy: {}", authConfig.tunnelPolicy().name().toLowerCase());
     }
 
     /** 独立服务端初始化时调用。配置或身份密钥有问题时抛出异常，服务端拒绝启动。 */
@@ -343,7 +331,10 @@ public final class TrustedServerRuntime {
         String notice = config.opSuspendedNotice();
         if (!notice.isEmpty() && opSuspended(player.getUUID())
                 && player.server.getPlayerList().getOps().get(player.getGameProfile()) != null) {
-            player.sendSystemMessage(Component.literal("[TrustedServer] " + notice));
+            Component message = notice.equals("OP 权限已暂停，可使用 /passwd 设置登录密码")
+                    ? Component.translatable("trustedserver.notice.op_suspended")
+                    : Component.literal(notice);
+            player.sendSystemMessage(Component.literal("[TrustedServer] ").append(message));
         }
     }
 
@@ -392,14 +383,14 @@ public final class TrustedServerRuntime {
         // 账号重置后用新的认证重新判定限制和 OP，避免继续使用登录时的状态。
         handovers.forEach((connection, accepted) -> {
             if (accepted.accountId().equals(accountId)) {
-                connection.disconnect(Component.literal("认证资料已重置，请重新登录"));
+                connection.disconnect(Component.translatable("trustedserver.disconnect.account_reset"));
                 closePendingHandover(connection);
             }
         });
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             PlayAccess access = playAccess(player.getUUID(), connectionOf(player.connection));
             if (access != null && access.login.accountId().equals(accountId)) {
-                player.connection.disconnect(Component.literal("认证资料已重置，请重新登录"));
+                player.connection.disconnect(Component.translatable("trustedserver.disconnect.account_reset"));
             }
         }
     }

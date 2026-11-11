@@ -26,7 +26,7 @@
 | 游戏内密码通道 | Fabric API `ServerPlayNetworking`，每位玩家一个 `PlayPasswordEndpoint` |
 | 控制台命令 | `trustedserver reset/trust/fingerprint`，只允许控制台来源 |
 | 服务器列表 | Mixin `ServerStatusPacketListenerImpl` 与旧版 Ping 处理：限流、清空玩家样本、`StatusSanitizer` 人数；强制关闭 query |
-| 隧道模式 | Netty 管线切换（最外层），放在最后单独实现与验证 |
+| 隧道模式 | 已在 Netty `splitter` / `prepender` 外接入；offline 新增 AES-GCM，online 替换原版 `decrypt` / `encrypt` |
 
 ## 3. 客户端接入点（1.20.1）
 
@@ -59,7 +59,7 @@
 |---|---|
 | 正式认证协议 | Ed25519 / TOFU / SQLite 玩家公钥绑定、登录及找回密码弹框、游戏内密码通道已接入 |
 | 服务端公钥变更确认界面 | 默认拒绝并在断开界面说明 |
-| 隧道模式 | 强制关闭；配置为 optional / required 时打印警告 |
+| 隧道模式 | 已接入：客户端 FinishAck 写入旧链路后切换，服务端验证 FinishAck 后切换；支持 disabled / optional / required |
 | invalid session 回退 | 已纳入第一阶段：切换为离线 UUID 后必须通过 PSK；已声明的正版同名禁止回退 |
 | 导出 / 导入按钮 | 已通过可选 Mod Menu 设置入口接入：默认全选、分页选择、密码加密、明文风险确认、只读预检与显式冲突覆盖 |
 
@@ -128,6 +128,6 @@
 | C | 后续正式认证：TOFU、玩家密钥、密码与确认界面、invalid session 回退 | 新用户设密码、老用户登录、密钥变更确认可在开发环境走通 |
 | D | 游戏阶段：受限、OP 暂停、游戏内密码通道、进服提示、控制台命令 | 受限玩家无法执行指令，`/passwd` 后解除 |
 | E | 服务器列表脱敏、旧版 Ping、关闭 query | Ping 不再泄露玩家名 |
-| F | 隧道模式 | 双端开启隧道后可正常游戏，抓包看不到明文 |
+| F | 隧道模式 | 已完成 Netty 接入、双向/分片/篡改测试；仍需真实双端抓包联调 |
 | G | 设置界面：导出 / 导入认证 | 两台客户端之间迁移成功 |
 | H | 引入 Stonecutter，扩展版本与加载器 | 按支持矩阵逐个构建通过 |

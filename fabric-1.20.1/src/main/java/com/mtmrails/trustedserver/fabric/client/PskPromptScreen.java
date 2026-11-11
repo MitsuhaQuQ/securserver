@@ -25,7 +25,7 @@ final class PskPromptScreen extends Screen {
     private boolean finished;
 
     PskPromptScreen(Screen parent, String address, Submitter submitter, Runnable cancelled) {
-        super(Component.literal("TrustedServer 密钥"));
+        super(Component.translatable("trustedserver.psk.title"));
         this.parent = parent;
         this.address = address;
         this.submitter = submitter;
@@ -36,13 +36,13 @@ final class PskPromptScreen extends Screen {
     protected void init() {
         int center = width / 2;
         input = new EditBox(font, center - 150, height / 2 - 10, 300, 20,
-                Component.literal("Base64 PSK"));
+                Component.translatable("trustedserver.psk.field"));
         input.setMaxLength(128);
         input.setFormatter((text, offset) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
         addRenderableWidget(input);
-        addRenderableWidget(Button.builder(Component.literal("保存并连接"), button -> submit())
+        addRenderableWidget(Button.builder(Component.translatable("trustedserver.button.save_and_connect"), button -> submit())
                 .bounds(center - 150, height / 2 + 24, 145, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("取消"), button -> onClose())
+        addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), button -> onClose())
                 .bounds(center + 5, height / 2 + 24, 145, 20).build());
         setInitialFocus(input);
     }
@@ -79,9 +79,9 @@ final class PskPromptScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, 0xC0101010);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 72, 0xFFFFFF);
-        graphics.drawCenteredString(font, Component.literal("服务器：" + address), width / 2,
+        graphics.drawCenteredString(font, Component.translatable("trustedserver.psk.server", address), width / 2,
                 height / 2 - 52, 0xA0A0A0);
-        graphics.drawCenteredString(font, Component.literal("请输入服主提供的 32 字节 Base64 PSK"), width / 2,
+        graphics.drawCenteredString(font, Component.translatable("trustedserver.psk.description"), width / 2,
                 height / 2 - 34, 0xFFFFFF);
         if (error != null) {
             graphics.drawCenteredString(font, error, width / 2, height / 2 + 52, 0xFF5555);

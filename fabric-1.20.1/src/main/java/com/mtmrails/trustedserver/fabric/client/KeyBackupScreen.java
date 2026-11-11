@@ -10,6 +10,7 @@ import java.util.List;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
@@ -25,17 +26,17 @@ final class KeyBackupScreen extends Screen {
     private Component status;
     private Button exportButton;
 
-    KeyBackupScreen(Screen parent, PlayerKeyBackupManager manager, String status) {
-        super(Component.literal("TrustedServer 认证密钥"));
+    KeyBackupScreen(Screen parent, PlayerKeyBackupManager manager, Component status) {
+        super(Component.translatable("trustedserver.backup.title"));
         this.parent = parent;
         this.manager = manager;
-        this.status = status == null ? null : Component.literal(status);
+        this.status = status;
         try {
             keys.addAll(manager.list());
             selected = new boolean[keys.size()];
             java.util.Arrays.fill(selected, true);
         } catch (IOException e) {
-            this.status = Component.literal("无法读取本地密钥：" + e.getMessage());
+            this.status = Component.translatable("trustedserver.backup.error.read_local", e.getMessage());
         }
     }
 
@@ -54,31 +55,31 @@ final class KeyBackupScreen extends Screen {
             addRenderableWidget(row);
         }
 
-        Button previous = Button.builder(Component.literal("上一页"), b -> {
+        Button previous = Button.builder(Component.translatable("trustedserver.button.previous_page"), b -> {
             page--;
             rebuildWidgets();
         }).bounds(center - 190, height - 76, 80, 20).build();
         previous.active = page > 0;
         addRenderableWidget(previous);
-        Button next = Button.builder(Component.literal("下一页"), b -> {
+        Button next = Button.builder(Component.translatable("trustedserver.button.next_page"), b -> {
             page++;
             rebuildWidgets();
         }).bounds(center - 105, height - 76, 80, 20).build();
         next.active = (page + 1) * PAGE_SIZE < keys.size();
         addRenderableWidget(next);
-        addRenderableWidget(Button.builder(Component.literal("全选/全不选"), b -> {
+        addRenderableWidget(Button.builder(Component.translatable("trustedserver.button.toggle_all"), b -> {
             boolean choose = selectedCount() != selected.length;
             java.util.Arrays.fill(selected, choose);
             rebuildWidgets();
         }).bounds(center + 25, height - 76, 165, 20).build());
 
-        exportButton = Button.builder(Component.literal("导出所选认证"), b -> exportSelected())
+        exportButton = Button.builder(Component.translatable("trustedserver.button.export_selected"), b -> exportSelected())
                 .bounds(center - 190, height - 50, 120, 20).build();
         updateExportButton();
         addRenderableWidget(exportButton);
-        addRenderableWidget(Button.builder(Component.literal("导入认证"), b -> importBackup())
+        addRenderableWidget(Button.builder(Component.translatable("trustedserver.button.import_auth"), b -> importBackup())
                 .bounds(center - 60, height - 50, 120, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("完成"), b -> onClose())
+        addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose())
                 .bounds(center + 70, height - 50, 120, 20).build());
     }
 
@@ -86,8 +87,8 @@ final class KeyBackupScreen extends Screen {
         StoredKey key = keys.get(index);
         String fingerprint = key.target().serverFingerprint();
         if (fingerprint.length() > 16) fingerprint = fingerprint.substring(0, 16);
-        return Component.literal((selected[index] ? "[✓] " : "[ ] ") + key.target().username()
-                + "  服务器 " + fingerprint + "…");
+        return Component.translatable("trustedserver.backup.entry",
+                selected[index] ? "[✓]" : "[ ]", key.target().username(), fingerprint + "…");
     }
 
     private int selectedCount() {
@@ -106,7 +107,7 @@ final class KeyBackupScreen extends Screen {
         List<StoredKey> chosen = new ArrayList<>();
         for (int i = 0; i < keys.size(); i++) if (selected[i]) chosen.add(keys.get(i));
         if (chosen.isEmpty()) {
-            status = Component.literal("请至少勾选一项认证密钥后再导出");
+            status = Component.translatable("trustedserver.backup.error.select_one");
             updateExportButton();
             return;
         }
@@ -114,8 +115,9 @@ final class KeyBackupScreen extends Screen {
     }
 
     private void importBackup() {
-        String chosen = TinyFileDialogs.tinyfd_openFileDialog("导入 TrustedServer 认证", "", null,
-                "TrustedServer key backup", false);
+        String chosen = TinyFileDialogs.tinyfd_openFileDialog(
+                I18n.get("trustedserver.backup.dialog.import"), "", null,
+                I18n.get("trustedserver.backup.dialog.filter"), false);
         if (chosen != null) {
             minecraft.setScreen(new BackupImportPasswordScreen(this, manager, Path.of(chosen)));
         }
@@ -134,10 +136,10 @@ final class KeyBackupScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, 0xC0101010);
         graphics.drawCenteredString(font, title, width / 2, 20, 0xFFFFFF);
-        graphics.drawCenteredString(font, Component.literal("默认全选；备份不包含登录密码或服务器私钥"),
+        graphics.drawCenteredString(font, Component.translatable("trustedserver.backup.description"),
                 width / 2, 33, 0xA0A0A0);
         if (keys.isEmpty() && status == null) {
-            graphics.drawCenteredString(font, Component.literal("本机还没有玩家认证密钥"),
+            graphics.drawCenteredString(font, Component.translatable("trustedserver.backup.empty"),
                     width / 2, height / 2, 0xA0A0A0);
         }
         if (status != null) {

@@ -24,7 +24,7 @@ public sealed interface PasswordCommand {
     }
 
     /** 是本 mod 的命令但用法不对：只在本地提示，不发送任何内容。 */
-    record Invalid(Kind kind, String reason) implements PasswordCommand {
+    record Invalid(Kind kind, InvalidReason reason) implements PasswordCommand {
     }
 
     /** 不是本 mod 的命令，照常交给原版处理。 */
@@ -42,8 +42,14 @@ public sealed interface PasswordCommand {
         }
 
         public String usage() {
-            return "/" + command + " <密码> <确认密码>";
+            return "/" + command + " <password> <confirm-password>";
         }
+    }
+
+    /** 由适配层转换为本地化文本，避免核心命令解析器绑定某一种语言。 */
+    enum InvalidReason {
+        USAGE,
+        MISMATCH
     }
 
     /** 解析一行聊天输入（含开头的 {@code /}）。 */
@@ -64,10 +70,10 @@ public sealed interface PasswordCommand {
         }
         String[] args = space < 0 ? new String[0] : body.substring(space + 1).split(" ", -1);
         if (args.length != 2 || args[0].isEmpty() || args[1].isEmpty()) {
-            return new Invalid(kind, "用法：" + kind.usage() + "（密码不能包含空格）");
+            return new Invalid(kind, InvalidReason.USAGE);
         }
         if (!args[0].equals(args[1])) {
-            return new Invalid(kind, "两次输入的密码不一致");
+            return new Invalid(kind, InvalidReason.MISMATCH);
         }
         return new Set(kind, args[0]);
     }

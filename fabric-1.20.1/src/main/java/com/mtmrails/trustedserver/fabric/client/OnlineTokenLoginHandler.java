@@ -48,9 +48,9 @@ final class OnlineTokenLoginHandler {
             }
             return CompletableFuture.completedFuture(onChallenge(client, handler, payload));
         } catch (IOException e) {
-            return fail(handler, "无法保存正版登录令牌：" + e.getMessage());
+            return fail(handler, Component.translatable("trustedserver.disconnect.online_token_save", e.getMessage()));
         } catch (MalformedMessageException | IllegalArgumentException e) {
-            return fail(handler, "正版令牌协议错误。");
+            return fail(handler, Component.translatable("trustedserver.disconnect.online_token_protocol"));
         }
     }
 
@@ -89,10 +89,10 @@ final class OnlineTokenLoginHandler {
         }
     }
 
-    private CompletableFuture<FriendlyByteBuf> fail(ClientHandshakePacketListenerImpl handler, String message) {
+    private CompletableFuture<FriendlyByteBuf> fail(ClientHandshakePacketListenerImpl handler, Component message) {
         pending.remove(handler);
-        TrustedServerFabric.LOGGER.warn("TrustedServer online token failed locally: {}", message);
-        ClientLoginHandler.connection(handler).disconnect(Component.literal(message));
+        TrustedServerFabric.LOGGER.warn("TrustedServer online token failed locally: {}", message.getString());
+        ClientLoginHandler.connection(handler).disconnect(message);
         return CompletableFuture.completedFuture(null);
     }
 

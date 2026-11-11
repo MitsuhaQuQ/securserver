@@ -15,6 +15,7 @@ import com.mtmrails.trustedserver.core.wire.MalformedMessageException;
 import com.mtmrails.trustedserver.fabric.MinecraftAccess;
 import com.mtmrails.trustedserver.fabric.TrustedServerFabric;
 import com.mtmrails.trustedserver.fabric.network.PlayPasswordNetworking;
+import com.mtmrails.trustedserver.fabric.tunnel.TunnelPipeline;
 import com.mtmrails.trustedserver.server.policy.ConnectionGate;
 import java.net.InetAddress;
 import java.io.IOException;
@@ -384,8 +385,7 @@ public final class LoginFlow {
         AuthOutcome outcome = ((ServerStep.Done) step).outcome();
         if (outcome instanceof AuthOutcome.Rejected rejected) {
             Component message = rejected.trusted() && rejected.reason() == RejectReason.KEY_MISMATCH
-                    ? Component.literal("设备密钥与绑定不匹配或无法自助恢复。请使用原设备或导入认证备份，"
-                            + "也可使用已设置的找回密码，或联系管理员。")
+                    ? Component.translatable("trustedserver.disconnect.key_mismatch")
                     : runtime.rejection();
             rejectAuthentication("formal authentication " + rejected.reason().name().toLowerCase(Locale.ROOT),
                     rejected.trusted(), message);
@@ -424,6 +424,22 @@ public final class LoginFlow {
     }
 
     private void finishAccepted(String method, AuthOutcome.Accepted accepted) {
+        synchronized (lock) {
+            if (done) {
+                if (accepted != null) accepted.handover().close();
+                return;
+            }
+        }
+        Connection connection = MinecraftAccess.connection(handler);
+        if (accepted != null) {
+            try {
+                TunnelPipeline.installServer(connection, accepted.handover());
+            } catch (RuntimeException e) {
+                accepted.handover().close();
+                rejectAuthentication("cannot install tunnel", true);
+                return;
+            }
+        }
         List<HeldPacket> toSend = List.of();
         synchronized (lock) {
             if (done) {
@@ -435,8 +451,7 @@ public final class LoginFlow {
             toSend = new ArrayList<>(held);
             held.clear();
             if (accepted != null) {
-                runtime.registerHandover(
-                        MinecraftAccess.connection(handler), accepted);
+                runtime.registerHandover(connection, accepted);
             }
         }
         cancelTimeout();

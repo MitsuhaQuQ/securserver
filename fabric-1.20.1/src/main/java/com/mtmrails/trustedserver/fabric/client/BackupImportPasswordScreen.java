@@ -21,7 +21,7 @@ final class BackupImportPasswordScreen extends Screen {
     private Component error;
 
     BackupImportPasswordScreen(KeyBackupScreen parent, PlayerKeyBackupManager manager, Path source) {
-        super(Component.literal("导入认证密钥"));
+        super(Component.translatable("trustedserver.backup.import.title"));
         this.parent = parent;
         this.manager = manager;
         this.source = source;
@@ -30,13 +30,14 @@ final class BackupImportPasswordScreen extends Screen {
     @Override
     protected void init() {
         int center = width / 2;
-        password = new EditBox(font, center - 150, height / 2 - 20, 300, 20, Component.literal("备份密码"));
+        password = new EditBox(font, center - 150, height / 2 - 20, 300, 20,
+                Component.translatable("trustedserver.backup.field.password"));
         password.setMaxLength(256);
         password.setFormatter((text, offset) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
         addRenderableWidget(password);
-        addRenderableWidget(Button.builder(Component.literal("检查备份"), b -> preview())
+        addRenderableWidget(Button.builder(Component.translatable("trustedserver.button.check_backup"), b -> preview())
                 .bounds(center - 150, height / 2 + 20, 145, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("取消"), b -> onClose())
+        addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose())
                 .bounds(center + 5, height / 2 + 20, 145, 20).build());
         setInitialFocus(password);
     }
@@ -48,14 +49,14 @@ final class BackupImportPasswordScreen extends Screen {
                     secret.isEmpty() ? Optional.empty() : Optional.of(secret));
             minecraft.setScreen(new BackupImportConfirmScreen(parent, manager, preview));
         } catch (BackupException e) {
-            error = Component.literal(switch (e.kind()) {
-                case PASSWORD_REQUIRED -> "此备份需要密码";
-                case WRONG_PASSWORD_OR_CORRUPTED -> "密码错误或备份已损坏";
-                case CORRUPTED -> "备份已损坏";
-                case UNSUPPORTED_FORMAT -> "不是受支持的 TrustedServer 备份";
+            error = Component.translatable(switch (e.kind()) {
+                case PASSWORD_REQUIRED -> "trustedserver.backup.error.password_required";
+                case WRONG_PASSWORD_OR_CORRUPTED -> "trustedserver.backup.error.wrong_password_or_corrupted";
+                case CORRUPTED -> "trustedserver.backup.error.corrupted";
+                case UNSUPPORTED_FORMAT -> "trustedserver.backup.error.unsupported_format";
             });
         } catch (Exception e) {
-            error = Component.literal("读取失败：" + e.getMessage());
+            error = Component.translatable("trustedserver.backup.error.read", e.getMessage());
         }
     }
 
@@ -70,7 +71,8 @@ final class BackupImportPasswordScreen extends Screen {
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 70, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.literal(source.getFileName().toString()),
                 width / 2, height / 2 - 52, 0xA0A0A0);
-        graphics.drawString(font, "备份密码（明文备份留空）", width / 2 - 150, height / 2 - 32, 0xA0A0A0);
+        graphics.drawString(font, Component.translatable("trustedserver.backup.password_or_blank"),
+                width / 2 - 150, height / 2 - 32, 0xA0A0A0);
         if (error != null) graphics.drawCenteredString(font, error, width / 2, height / 2 + 50, 0xFF5555);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
