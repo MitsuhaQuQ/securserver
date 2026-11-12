@@ -37,6 +37,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.status.ServerStatus;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.GameType;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.server.network.ServerLoginPacketListenerImpl;
 
@@ -319,6 +320,17 @@ public final class TrustedServerRuntime {
         PlayAccess access = player.connection == null ? playing.get(player.getUUID())
                 : playAccess(player.getUUID(), connectionOf(player.connection));
         return access != null && access.restricted;
+    }
+
+    /** 返回受限玩家必须使用的游戏模式，未受限时返回 null。 */
+    public GameType restrictedGameMode(ServerPlayer player) {
+        if (!restricted(player)) {
+            return null;
+        }
+        return switch (config.restrictedGameMode()) {
+            case SURVIVAL -> GameType.SURVIVAL;
+            case ADVENTURE -> GameType.ADVENTURE;
+        };
     }
 
     public boolean opSuspended(UUID player) {

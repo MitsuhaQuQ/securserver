@@ -34,6 +34,7 @@ class ConfigLoaderTest {
         assertTrue(written.contains("\"loginPassword\": true"));
         assertTrue(written.contains("\"recoveryPassword\": true"));
         assertTrue(written.contains("\"newPlayerRestriction\": true"));
+        assertTrue(written.contains("\"restrictedGameMode\": \"survival\""));
         assertTrue(written.contains("\"requirePasswordForVerifiedOps\": false"));
         assertTrue(written.contains("设定密码后解除新用户限制")); // 中文不被转义
 
@@ -47,6 +48,18 @@ class ConfigLoaderTest {
     void writtenDefaultsDocumentEveryKnownKey() throws Exception {
         // 默认配置里写出的每个键都必须能被读取（不会被报告为未知）
         assertEquals(List.of(), ConfigLoader.parse(ConfigLoader.toJson(ServerConfig.DEFAULT)).unknownKeys());
+    }
+
+    @Test
+    void restrictedGameModeAcceptsAdventureAndRejectsCreative() throws Exception {
+        var config = ConfigLoader.parse("""
+                {"auth": {"restrictedGameMode": "adventure"}}
+                """).config();
+        assertEquals(ServerConfig.RestrictedGameMode.ADVENTURE, config.restrictedGameMode());
+        assertEquals(config, ConfigLoader.parse(ConfigLoader.toJson(config)).config());
+        assertTrue(error("""
+                {"auth": {"restrictedGameMode": "creative"}}
+                """).contains("auth.restrictedGameMode"));
     }
 
     @Test

@@ -15,10 +15,12 @@ import java.util.Objects;
  */
 public record ServerConfig(ServerAuthConfig auth, int authTimeoutSec, AccountServiceConfig accounts,
         String databasePath, NetworkPolicyConfig network, StatusConfig status, RejectionText rejection,
-        String opSuspendedNotice) {
+        String opSuspendedNotice, RestrictedGameMode restrictedGameMode) {
+    public enum RestrictedGameMode { SURVIVAL, ADVENTURE }
+
     public static final ServerConfig DEFAULT = new ServerConfig(ServerAuthConfig.defaults(), 90,
             AccountServiceConfig.DEFAULT, SqliteStore.DEFAULT_PATH, NetworkPolicyConfig.DEFAULT, StatusConfig.DEFAULT,
-            RejectionText.DEFAULT, "OP 权限已暂停，可使用 /passwd 设置登录密码");
+            RejectionText.DEFAULT, "OP 权限已暂停，可使用 /passwd 设置登录密码", RestrictedGameMode.SURVIVAL);
 
     public ServerConfig {
         Objects.requireNonNull(auth, "auth");
@@ -28,6 +30,7 @@ public record ServerConfig(ServerAuthConfig auth, int authTimeoutSec, AccountSer
         Objects.requireNonNull(status, "status");
         Objects.requireNonNull(rejection, "rejection");
         Objects.requireNonNull(opSuspendedNotice, "opSuspendedNotice");
+        Objects.requireNonNull(restrictedGameMode, "restrictedGameMode");
         if (authTimeoutSec <= auth.passwordTimeoutSec()) {
             throw new IllegalArgumentException("authTimeoutSeconds must be greater than passwordPromptTimeoutSeconds");
         }

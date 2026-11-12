@@ -19,20 +19,22 @@ abstract class RestrictedGameModeMixin {
 
     @Inject(method = "changeGameModeForPlayer", at = @At("HEAD"), cancellable = true)
     private void trustedserver$denyGameModeChange(GameType requested, CallbackInfoReturnable<Boolean> cir) {
-        if (requested != GameType.SURVIVAL && trustedserver$isRestricted()) {
+        GameType restrictedMode = trustedserver$restrictedMode();
+        if (restrictedMode != null && requested != restrictedMode) {
             cir.setReturnValue(false);
         }
     }
 
     /** 同样覆盖原版从存档加载模式及重生时复制模式的内部调用。 */
     @ModifyVariable(method = "setGameModeForPlayer", at = @At("HEAD"), argsOnly = true, ordinal = 0)
-    private GameType trustedserver$forceSurvival(GameType requested) {
-        return trustedserver$isRestricted() ? GameType.SURVIVAL : requested;
+    private GameType trustedserver$forceRestrictedMode(GameType requested) {
+        GameType restrictedMode = trustedserver$restrictedMode();
+        return restrictedMode == null ? requested : restrictedMode;
     }
 
     @Unique
-    private boolean trustedserver$isRestricted() {
+    private GameType trustedserver$restrictedMode() {
         TrustedServerRuntime runtime = TrustedServerRuntime.get();
-        return runtime != null && runtime.restricted(player);
+        return runtime == null ? null : runtime.restrictedGameMode(player);
     }
 }

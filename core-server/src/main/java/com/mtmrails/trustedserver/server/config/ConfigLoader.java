@@ -78,7 +78,9 @@ public final class ConfigLoader {
         try {
             ServerConfig config = new ServerConfig(readAuth(top, d), readAuthTimeout(top, d), readAccounts(top, d),
                     readDatabase(top, d), readNetwork(top, d), readStatus(top, d), readRejection(top, d),
-                    top.section("notices").string("opSuspended", d.opSuspendedNotice()));
+                    top.section("notices").string("opSuspended", d.opSuspendedNotice()),
+                    top.section("auth").enumValue("restrictedGameMode", d.restrictedGameMode(),
+                            ServerConfig.RestrictedGameMode.class));
             List<String> unknown = new ArrayList<>();
             top.collectUnknown(unknown);
             return new Result(config, unknown, false);
@@ -214,6 +216,7 @@ public final class ConfigLoader {
         validation.addProperty("newPlayerRestriction", c.auth().validation().newPlayerRestriction());
         validation.addProperty("requirePasswordForVerifiedOps", c.auth().validation().requirePasswordForVerifiedOps());
         auth.add("validation", validation);
+        auth.addProperty("restrictedGameMode", lower(c.restrictedGameMode()));
         auth.addProperty("maxPasswordAttempts", c.auth().maxPasswordAttempts());
         auth.addProperty("passwordPromptTimeoutSeconds", c.auth().passwordTimeoutSec());
         auth.addProperty("authTimeoutSeconds", c.authTimeoutSec());

@@ -22,7 +22,7 @@
 | 登录超时 | Mixin 放宽 `ServerLoginPacketListenerImpl` 的 600 tick 限制，并由我们按配置计时 |
 | invalid session 回退 | Mixin 拦截 Mojang 验证失败时的断开，改为按第 17 条确定账号与 UUID 后继续 |
 | 连接结束 | `ConnectionGate.endLogin(地址, 是否完成可信握手)`；放行后 `AccountService.recordLogin` |
-| 新用户受限 / OP 暂停 | 在载入玩家时强制生存模式，拦截指令执行和补全，并发送空指令树。OP 权限按连接暂停。通过密码通道设定登录密码后即时刷新权限 |
+| 新用户受限 / OP 暂停 | 在载入玩家时强制使用 `auth.restrictedGameMode` 指定的生存或冒险模式，拦截指令执行和补全，并发送空指令树。OP 权限按连接暂停。通过密码通道设定登录密码后即时刷新权限 |
 | 游戏内密码通道 | Fabric API `ServerPlayNetworking`，每位玩家一个 `PlayPasswordEndpoint` |
 | 控制台命令 | `trustedserver reset/trust/fingerprint`，只允许控制台来源 |
 | 服务器列表 | Mixin `ServerStatusPacketListenerImpl` 与旧版 Ping 处理：限流、清空玩家样本、`StatusSanitizer` 人数；强制关闭 query |
@@ -67,6 +67,7 @@
 
 ```json
 "auth": {
+  "restrictedGameMode": "survival",
   "validation": {
     "ed25519": true,
     "loginPassword": true,
