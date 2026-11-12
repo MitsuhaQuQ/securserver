@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.ModifyConstant;
 abstract class ServerLoginTimeoutMixin {
     @ModifyConstant(method = "tick", constant = @Constant(intValue = 600))
     private int trustedserver$extendLoginTimeout(int original) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         return runtime == null ? original : Math.max(original, runtime.loginTimeoutTicks());
     }
 }

@@ -35,7 +35,7 @@ abstract class ConnectionHoldQueriesMixin {
                 || MinecraftAccess.loginQueryId(query).getNamespace().equals(OWN_NAMESPACE)) {
             return;
         }
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         if (runtime == null || !(getPacketListener() instanceof ServerLoginPacketListenerImpl login)) {
             return;
         }

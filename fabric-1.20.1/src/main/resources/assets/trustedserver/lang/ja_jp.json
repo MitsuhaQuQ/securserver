@@ -1,4 +1,5 @@
 {
+  "trustedserver.guard.block_break_cooldown": "短時間にブロックを壊しすぎました。%s 秒後に再開できます。",
   "trustedserver.backup.allow_plaintext": "リスクを理解し、平文でのエクスポートを許可する",
   "trustedserver.backup.description": "既定ではすべて選択されます。バックアップにログインパスワードやサーバー秘密鍵は含まれません",
   "trustedserver.backup.dialog.export": "TrustedServer 認証をエクスポート",

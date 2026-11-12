@@ -15,6 +15,7 @@ import com.mtmrails.trustedserver.server.config.ConfigLoader;
 import com.mtmrails.trustedserver.server.config.RejectionText;
 import com.mtmrails.trustedserver.server.config.ServerConfig;
 import com.mtmrails.trustedserver.server.policy.ConnectionGate;
+import com.mtmrails.trustedserver.server.policy.NewPlayerGuard;
 import com.mtmrails.trustedserver.server.status.StatusSanitizer;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -88,20 +89,19 @@ public final class TrustedServerRuntime {
     private TrustedServerRuntime(ServerConfig config, ServerIdentity.Loaded identity,
             PresharedKeyFile.Loaded psk, OnlineTokenStore onlineTokens, AccountService accounts) {
         this.config = config;
-        this.identity = identity.key();
-        this.fingerprint = identity.fingerprint();
-        this.psk = psk.key();
+        this.identity = identity == null ? null : identity.key();
+        this.fingerprint = identity == null ? null : identity.fingerprint();
+        this.psk = psk == null ? null : psk.key();
         this.onlineTokens = onlineTokens;
         this.accounts = accounts;
         this.gate = new ConnectionGate(config.network(), Clock.systemUTC());
         this.status = new StatusSanitizer(config.status(), Clock.systemUTC(), new Random());
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        this.scheduler = accounts == null ? null : Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "trustedserver-timeouts");
             thread.setDaemon(true);
             return thread;
         });
         this.authConfig = config.auth();
-        TrustedServerFabric.LOGGER.info("Full-connection tunnel policy: {}", authConfig.tunnelPolicy().name().toLowerCase());
     }
 
     /** 独立服务端初始化时调用。配置或身份密钥有问题时抛出异常，服务端拒绝启动。 */
@@ -119,6 +119,11 @@ public final class TrustedServerRuntime {
         for (String key : loaded.unknownKeys()) {
             TrustedServerFabric.LOGGER.warn("Unknown key in server.json ignored: {}", key);
         }
+        if (loaded.config().securityLevel() == ServerConfig.SecurityLevel.STATUS_ONLY) {
+            instance = new TrustedServerRuntime(loaded.config(), null, null, null, null);
+            TrustedServerFabric.LOGGER.info("Status-only protection enabled; Minecraft handles login");
+            return;
+        }
         ServerIdentity.Loaded identity;
         PresharedKeyFile.Loaded psk;
         OnlineTokenStore onlineTokens = new OnlineTokenStore(dir.resolve("online_tokens.txt"));
@@ -134,6 +139,7 @@ public final class TrustedServerRuntime {
         AccountService accounts = AccountService.open(Path.of(loaded.config().databasePath()),
                 loaded.config().accounts(), Clock.systemUTC(), new SecureRandom());
         instance = new TrustedServerRuntime(loaded.config(), identity, psk, onlineTokens, accounts);
+        TrustedServerFabric.LOGGER.info("Full-connection tunnel policy: {}", loaded.config().auth().tunnelPolicy());
         TrustedServerFabric.LOGGER.info("Server identity {}: {}", identity.created() ? "created" : "loaded",
                 identity.fingerprint());
         TrustedServerFabric.LOGGER.info("PSK login gate enabled ({} {})",
@@ -148,7 +154,7 @@ public final class TrustedServerRuntime {
     static void stop() {
         TrustedServerRuntime runtime = instance;
         instance = null;
-        if (runtime != null) {
+        if (runtime != null && runtime.accounts != null) {
             runtime.scheduler.shutdownNow();
             runtime.handovers.values().forEach(pending -> pending.handover().close());
             runtime.playing.values().forEach(PlayAccess::close);
@@ -162,8 +168,18 @@ public final class TrustedServerRuntime {
         return instance;
     }
 
+    /** 只有完整认证级别才运行登录及游戏阶段的拦截。 */
+    public static TrustedServerRuntime getForAuthentication() {
+        TrustedServerRuntime runtime = instance;
+        return runtime != null && runtime.accounts != null ? runtime : null;
+    }
+
     public ServerAuthConfig authConfig() {
         return authConfig;
+    }
+
+    NewPlayerGuard.Config newPlayerGuardConfig() {
+        return config.newPlayerGuard();
     }
 
     public int authTimeoutSec() {

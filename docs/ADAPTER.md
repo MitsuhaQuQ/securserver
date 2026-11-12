@@ -23,10 +23,13 @@
 | invalid session 回退 | Mixin 拦截 Mojang 验证失败时的断开，改为按第 17 条确定账号与 UUID 后继续 |
 | 连接结束 | `ConnectionGate.endLogin(地址, 是否完成可信握手)`；放行后 `AccountService.recordLogin` |
 | 新用户受限 / OP 暂停 | 在载入玩家时强制使用 `auth.restrictedGameMode` 指定的生存或冒险模式，拦截指令执行和补全，并发送空指令树。OP 权限按连接暂停。通过密码通道设定登录密码后即时刷新权限 |
+| 新人行为防护 | `full` 级别可选启用。通过 Fabric `PlayerBlockBreakEvents.BEFORE` 拦截短时间内过多的直接破坏方块操作。爆炸和放火等间接破坏暂未接入 |
 | 游戏内密码通道 | Fabric API `ServerPlayNetworking`，每位玩家一个 `PlayPasswordEndpoint` |
 | 控制台命令 | `trustedserver reset/trust/fingerprint`，只允许控制台来源 |
 | 服务器列表 | Mixin `ServerStatusPacketListenerImpl` 与旧版 Ping 处理：限流、清空玩家样本、`StatusSanitizer` 人数；强制关闭 query |
 | 隧道模式 | 已在 Netty `splitter` / `prepender` 外接入；offline 新增 AES-GCM，online 替换原版 `decrypt` / `encrypt` |
+
+`status_only` 级别仅运行服务器列表保护，包括关闭 GameSpy4 Query。前置增强隧道目前仅实现核心握手，独立入口和 Minecraft 首包接入待完成。
 
 ## 3. 客户端接入点（1.20.1）
 

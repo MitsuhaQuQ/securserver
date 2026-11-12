@@ -1,4 +1,5 @@
 {
+  "trustedserver.guard.block_break_cooldown": "短時間內破壞方塊過多，%s 秒後可繼續破壞方塊。",
   "trustedserver.backup.allow_plaintext": "我瞭解風險，允許明文匯出",
   "trustedserver.backup.description": "預設全選；備份不包含登入密碼或伺服器私鑰",
   "trustedserver.backup.dialog.export": "匯出 TrustedServer 驗證",

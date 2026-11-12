@@ -23,7 +23,7 @@ abstract class ServerLoginHelloMixin {
 
     @Inject(method = "handleHello", at = @At("HEAD"), cancellable = true)
     private void trustedserver$gateHello(ServerboundHelloPacket packet, CallbackInfo ci) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         if (runtime != null && runtime.beginLogin((ServerLoginPacketListenerImpl) (Object) this, server) == null) {
             ci.cancel();
         }
@@ -31,7 +31,7 @@ abstract class ServerLoginHelloMixin {
 
     @Inject(method = "handleHello", at = @At("TAIL"))
     private void trustedserver$rememberHelloName(ServerboundHelloPacket packet, CallbackInfo ci) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         if (runtime != null) {
             var flow = runtime.loginFlow((ServerLoginPacketListenerImpl) (Object) this);
             if (flow != null) {

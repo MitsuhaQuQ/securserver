@@ -51,6 +51,19 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void statusOnlySecurityLevelIsOptInAndRoundTrips() throws Exception {
+        assertEquals(ServerConfig.SecurityLevel.FULL, ConfigLoader.parse("{}").config().securityLevel());
+        var config = ConfigLoader.parse("""
+                {"securityLevel": "status_only"}
+                """).config();
+        assertEquals(ServerConfig.SecurityLevel.STATUS_ONLY, config.securityLevel());
+        assertEquals(config, ConfigLoader.parse(ConfigLoader.toJson(config)).config());
+        assertTrue(error("""
+                {"securityLevel": "unknown"}
+                """).contains("securityLevel"));
+    }
+
+    @Test
     void restrictedGameModeAcceptsAdventureAndRejectsCreative() throws Exception {
         var config = ConfigLoader.parse("""
                 {"auth": {"restrictedGameMode": "adventure"}}

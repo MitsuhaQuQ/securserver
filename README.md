@@ -98,6 +98,8 @@
 
 ## 安装与首次启动
 
+当前开发版若只需保护服务器列表，可先在服务端 `config/trustedserver/server.json` 顶层加入 `"securityLevel": "status_only"`，然后启动或重启服务端。客户端可用原版，登录沿用服务端的正版验证、白名单和封禁设置。以下客户端安装与 PSK 步骤适用于默认的 `full` 级别。
+
 当前 Fabric 1.20.1、1.20.2、1.20.4 和 1.21.1 构建需要：
 
 - Minecraft 1.20.x 使用 Java 17；Minecraft 1.21.1 使用 Java 21；
@@ -174,6 +176,8 @@ mc.example.com:25566 <另一台服务器的 Base64 密钥>
 
 常用配置项：
 
+- `securityLevel`：默认 `full`，启用完整认证。`status_only` 只启用服务器列表 Ping 防护和玩家名单隐藏，原版客户端可按 Minecraft 的登录规则加入。修改后重启服务端。
+- `newPlayerGuard`：仅在 `full` 下生效，默认关闭。设 `enabled: true` 后，累计游戏时长低于 `newcomerMinutes`（默认 30 分钟）的玩家，在 `windowSeconds`（10 秒）内最多通过 `maxBreaks`（40）次直接破坏方块检查。超限后暂停破坏 `cooldownSeconds`（30 秒），并在服务端日志记录触发。有效权限等级 2 及以上的玩家豁免。游戏时长取自原版统计，玩家重连后仍须等剩余冷却时间，服务端重启会清除冷却。
 - `auth.validation.*`：Ed25519、登录密码、找回密码、新用户限制和已验证 OP 的密码要求；
 - `auth.restrictedGameMode`：受限玩家的游戏模式，接受 `survival`（默认）或 `adventure`。修改后重启服务端。
 - `password.*`：密码长度与 Argon2id 参数；
@@ -208,6 +212,8 @@ mc.example.com:25566 <另一台服务器的 Base64 密钥>
 - `auth.tunnel=required`：通过正式 Ed25519 握手的客户端必须启用，不受客户端偏好影响。
 
 隧道验证失败、帧乱序、重放、长度异常或连接截断时会立即关闭连接，不会降级回明文。隧道依赖 `auth.validation.ed25519=true`；非法配置会使服务端拒绝启动。
+
+前置增强隧道计划从首个 Minecraft 包开始加密。当前已实现并测试核心握手，Fabric 入口和客户端设置仍待接入。现有 `auth.tunnel` 控制的是登录认证完成后启用的隧道。见 [协议第 5.1 节](docs/PROTOCOL.md#51-可选增强隧道minecraft-握手前)。
 
 ## 构建
 

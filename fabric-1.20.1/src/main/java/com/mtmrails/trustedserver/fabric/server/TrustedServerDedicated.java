@@ -23,6 +23,12 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
     @Override
     public void onInitializeServer() {
         TrustedServerRuntime.start(FabricLoader.getInstance().getConfigDir());
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> TrustedServerRuntime.stop());
+        TrustedServerRuntime startup = TrustedServerRuntime.getForAuthentication();
+        if (startup == null) {
+            return;
+        }
+        NewPlayerProtection.register(startup.newPlayerGuardConfig());
 
         ServerLoginConnectionEvents.QUERY_START.register((handler, server, sender, synchronizer) -> {
             TrustedServerRuntime runtime = TrustedServerRuntime.get();
@@ -128,6 +134,5 @@ public final class TrustedServerDedicated implements DedicatedServerModInitializ
         });
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 AdminCommands.register(dispatcher));
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> TrustedServerRuntime.stop());
     }
 }

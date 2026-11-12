@@ -391,6 +391,34 @@ notices        : string × notice_count   客户端进服后要显示的提示�
   - 适配层必须处理 TCP 分片、合并读取及旧解码器残留缓冲，按协议边界移交尚未消费的字节；不得假定一次网络读取恰好对应一个包。若不能保证边界，关闭连接，不尝试猜测新旧格式。
 - 兼容性：隧道会改变线上字节格式，所以只在双方都装了本 mod 时启用；由于不支持代理，不存在中间层解析的问题
 
+### 5.1 可选增强隧道（Minecraft 握手前）
+
+默认关闭。首版使用独立端口，客户端按服务器条目显式选择。连接失败、握手失败、身份不符或协议版本不受支持时直接断开。状态查询和登录使用同样的连接规则。
+
+增强握手在 TCP 上执行，独立于 Minecraft 分帧和认证协议 v3。每条消息使用固定长度，头部为 ASCII `TSTE`、版本字节 `1` 和类型字节。所有公钥及随机数各 32 字节，签名 64 字节，确认值 32 字节。
+
+| 类型 | 方向 | 头部之后的字段 | 总字节数 |
+|---|---|---|---|
+| 1 ClientHello | C→S | 临时 X25519 公钥、随机数 | 70 |
+| 2 ServerHello | S→C | 临时 X25519 公钥、随机数、服务端 Ed25519 公钥、签名 | 166 |
+| 3 ClientFinished | C→S | 客户端确认值 | 38 |
+| 4 ServerFinished | S→C | 服务端确认值 | 38 |
+
+```
+unsigned  = 完整 ClientHello || 不含签名的 ServerHello
+signature = Ed25519.Sign(server_identity, ASCII("tsrv early v1 signature") || SHA256(unsigned))
+context   = SHA256(unsigned || signature)
+prk       = HKDF-Extract(server_nonce || client_nonce, X25519(本端临时私钥, 对端临时公钥))
+finished  = HKDF-Expand(prk, ASCII("tsrv early v1 finished " || direction) || context, 32)
+traffic   = HKDF-Expand(prk, ASCII("tsrv early v1 traffic " || direction) || context, 32)
+```
+
+`direction` 为 `c2s` 或 `s2c`。双方各自生成新的临时密钥和随机数。客户端在发送 ClientFinished 前核对预先信任的服务端公钥并验证签名。已有可信公钥可复用，首次使用须从可信渠道导入公钥，或用事先取得的可信指纹核对所见公钥。服务端验证 ClientFinished 后发送 ServerFinished。客户端验证 ServerFinished 后才发送第一个 Minecraft 包。确认值用恒定时间比较，任何失败均使该握手状态失效。
+
+之后复用第 5 节的 AES-256-GCM 分帧、AAD、计数与使用上限，使用本节独立派生的双向流量密钥。适配层按固定消息边界解析 TCP 分片，限制握手超时及未完成连接数。服务端须先排出 ServerFinished，再写入密文。增强端口的连接在完成确认之前不得进入 Minecraft 解码器。
+
+状态 Ping、Minecraft 握手、登录与游戏包都在隧道内。状态脱敏和限流、正版 session 和原版加密、PSK / 正版令牌、Ed25519 玩家认证和独立密码通道继续按原流程执行。内层认证使用同一个服务端 Ed25519 公钥，`FinishAck` 后沿用外层传输。独立的 Mojang HTTPS 请求、TCP 元数据及增强握手本身在隧道之外。
+
 ## 6. 游戏阶段的安全通道（`/passwd`、`/recoverypasswd`）
 
 在离线模式且未开隧道时，原版连接是明文，直接把聊天命令发出去会暴露密码。因此：
@@ -447,6 +475,8 @@ notices        : string × notice_count   客户端进服后要显示的提示�
 **共享出口（NAT）**：大量正常玩家可能共用同一个 IPv4 地址，因此 IP 维度的限制分两层：登录总量额度较宽；只有未通过可信握手的连接（没装 mod、协议错误、证明无效、握手前超时等）才消耗严格的“未验证”额度。IP 维度的密码错误锁定阈值对 IPv4 更宽、时长更短，并可整体关闭；防猜密码主要依靠账号维度的锁定。默认数值见 AGENTS.md 第 19 条。
 
 ## 8. Status Ping 脱敏
+
+服务器设为 `securityLevel=status_only` 时，仅运行本节的状态保护。现代和旧版 Ping 使用现有额度，状态响应隐藏玩家样本，GameSpy4 Query 关闭。登录使用 Minecraft 自身的认证、封禁、白名单和权限规则。省略该配置项时采用 `full`。
 
 - `status.mode=normal`（默认）：去掉玩家样本列表（sample）；在线人数可以是真实值、固定伪造值或范围内随机值；保留 MOTD、favicon 与版本显示
 - `status.mode=enhanced`、`disablePing=false`：现代 Ping 返回通用 MOTD、通用版本名称、空 favicon 与空样本；`playerCount=real` 时强制显示 0，fixed/random 仍按配置；附加 ServerSeekerV2 退出标记；协议号保持真实以保证兼容判断

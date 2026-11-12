@@ -13,6 +13,7 @@ import com.mtmrails.trustedserver.server.password.PasswordPolicy;
 import com.mtmrails.trustedserver.server.policy.Cidr;
 import com.mtmrails.trustedserver.server.policy.IpLockout;
 import com.mtmrails.trustedserver.server.policy.NetworkPolicyConfig;
+import com.mtmrails.trustedserver.server.policy.NewPlayerGuard;
 import com.mtmrails.trustedserver.server.policy.RateLimit;
 import com.mtmrails.trustedserver.server.status.StatusConfig;
 import java.io.IOException;
@@ -80,13 +81,24 @@ public final class ConfigLoader {
                     readDatabase(top, d), readNetwork(top, d), readStatus(top, d), readRejection(top, d),
                     top.section("notices").string("opSuspended", d.opSuspendedNotice()),
                     top.section("auth").enumValue("restrictedGameMode", d.restrictedGameMode(),
-                            ServerConfig.RestrictedGameMode.class));
+                            ServerConfig.RestrictedGameMode.class),
+                    top.enumValue("securityLevel", d.securityLevel(), ServerConfig.SecurityLevel.class),
+                    readNewPlayerGuard(top.section("newPlayerGuard"), d.newPlayerGuard()));
             List<String> unknown = new ArrayList<>();
             top.collectUnknown(unknown);
             return new Result(config, unknown, false);
         } catch (IllegalArgumentException e) {
             throw new ConfigException("server.json: " + e.getMessage(), e);
         }
+    }
+
+    private static NewPlayerGuard.Config readNewPlayerGuard(JsonSection section, NewPlayerGuard.Config defaults)
+            throws ConfigException {
+        return new NewPlayerGuard.Config(section.bool("enabled", defaults.enabled()),
+                section.integer("newcomerMinutes", defaults.newcomerMinutes(), 1, 1440),
+                section.integer("maxBreaks", defaults.maxBreaks(), 1, 1000),
+                section.integer("windowSeconds", defaults.windowSeconds(), 1, 300),
+                section.integer("cooldownSeconds", defaults.cooldownSeconds(), 1, 3600));
     }
 
     private static ServerAuthConfig readAuth(JsonSection top, ServerConfig d) throws ConfigException {
@@ -206,6 +218,14 @@ public final class ConfigLoader {
     public static String toJson(ServerConfig c) {
         JsonObject root = new JsonObject();
         root.addProperty("configVersion", CONFIG_VERSION);
+        root.addProperty("securityLevel", lower(c.securityLevel()));
+        JsonObject guard = new JsonObject();
+        guard.addProperty("enabled", c.newPlayerGuard().enabled());
+        guard.addProperty("newcomerMinutes", c.newPlayerGuard().newcomerMinutes());
+        guard.addProperty("maxBreaks", c.newPlayerGuard().maxBreaks());
+        guard.addProperty("windowSeconds", c.newPlayerGuard().windowSeconds());
+        guard.addProperty("cooldownSeconds", c.newPlayerGuard().cooldownSeconds());
+        root.add("newPlayerGuard", guard);
 
         JsonObject auth = new JsonObject();
         auth.addProperty("tunnel", lower(c.auth().tunnelPolicy()));

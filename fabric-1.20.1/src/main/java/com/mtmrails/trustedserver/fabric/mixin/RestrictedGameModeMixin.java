@@ -34,7 +34,7 @@ abstract class RestrictedGameModeMixin {
 
     @Unique
     private GameType trustedserver$restrictedMode() {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         return runtime == null ? null : runtime.restrictedGameMode(player);
     }
 }

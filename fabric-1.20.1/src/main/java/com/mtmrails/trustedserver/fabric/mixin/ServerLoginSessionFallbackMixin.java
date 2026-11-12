@@ -23,7 +23,7 @@ abstract class ServerLoginSessionFallbackMixin {
                 || translated.getKey().equals("multiplayer.disconnect.authservers_down"))) {
             return;
         }
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         LoginFlow flow = runtime == null ? null
                 : runtime.loginFlow((ServerLoginPacketListenerImpl) (Object) this);
         String name = flow == null ? null : flow.beginOfflineFallback();

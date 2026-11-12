@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class PlayerListPlayAccessMixin {
     @Inject(method = "placeNewPlayer", at = @At("HEAD"), cancellable = true)
     private void trustedserver$beginPlay(Connection connection, ServerPlayer player, CallbackInfo ci) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         if (runtime != null && !runtime.beginPlay(connection, player)) {
             ci.cancel();
         }

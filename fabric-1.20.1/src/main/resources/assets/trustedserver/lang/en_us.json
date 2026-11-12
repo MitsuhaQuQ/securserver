@@ -1,4 +1,5 @@
 {
+  "trustedserver.guard.block_break_cooldown": "Too many blocks broken in a short time. You can break blocks again in %s seconds.",
   "trustedserver.backup.allow_plaintext": "I understand the risk and allow plaintext export",
   "trustedserver.backup.description": "All keys are selected by default; backups do not include login passwords or server private keys",
   "trustedserver.backup.dialog.export": "Export TrustedServer authentication",

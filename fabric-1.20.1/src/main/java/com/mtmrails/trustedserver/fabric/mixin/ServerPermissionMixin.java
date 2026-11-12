@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class ServerPermissionMixin {
     @Inject(method = "getProfilePermissions", at = @At("HEAD"), cancellable = true)
     private void trustedserver$maskOpLevel(GameProfile profile, CallbackInfoReturnable<Integer> cir) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         if (runtime != null && runtime.opSuspended(profile.getId())) {
             cir.setReturnValue(0);
         }

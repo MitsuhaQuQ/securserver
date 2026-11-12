@@ -22,14 +22,14 @@ abstract class PlayPacketAccessMixin {
 
     @Inject(method = "handleChatCommand", at = @At("HEAD"), cancellable = true)
     private void trustedserver$discardDisconnectedCommand(ServerboundChatCommandPacket packet, CallbackInfo ci) {
-        if (TrustedServerRuntime.get() != null && !player.connection.isAcceptingMessages()) {
+        if (TrustedServerRuntime.getForAuthentication() != null && !player.connection.isAcceptingMessages()) {
             ci.cancel();
         }
     }
 
     @Inject(method = "handleCustomCommandSuggestions", at = @At("HEAD"), cancellable = true)
     private void trustedserver$hideCommandSuggestions(ServerboundCommandSuggestionPacket packet, CallbackInfo ci) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         if (runtime != null && runtime.restricted(player)) {
             player.connection.send(new ClientboundCommandSuggestionsPacket(packet.getId(), Suggestions.empty().join()));
             ci.cancel();
@@ -39,7 +39,7 @@ abstract class PlayPacketAccessMixin {
     @Redirect(method = "detectRateSpam", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/server/players/PlayerList;isOp(Lcom/mojang/authlib/GameProfile;)Z"))
     private boolean trustedserver$applySpamLimit(PlayerList list, GameProfile profile) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         return (runtime == null || !runtime.opSuspended(profile.getId())) && list.isOp(profile);
     }
 }

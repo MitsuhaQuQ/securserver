@@ -13,7 +13,7 @@ abstract class SpawnProtectionMixin {
     @Redirect(method = "isUnderSpawnProtection", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/server/dedicated/DedicatedPlayerList;isOp(Lcom/mojang/authlib/GameProfile;)Z"))
     private boolean trustedserver$enforceSpawnProtection(DedicatedPlayerList list, GameProfile profile) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         return (runtime == null || !runtime.opSuspended(profile.getId())) && list.isOp(profile);
     }
 }

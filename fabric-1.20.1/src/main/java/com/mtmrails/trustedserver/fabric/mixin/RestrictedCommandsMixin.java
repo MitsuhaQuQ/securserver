@@ -19,7 +19,7 @@ abstract class RestrictedCommandsMixin {
     @Inject(method = "performCommand", at = @At("HEAD"), cancellable = true)
     private void trustedserver$blockRestrictedCommand(ParseResults<CommandSourceStack> command, String input,
             CallbackInfoReturnable<Integer> cir) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         CommandSourceStack source = command.getContext().getSource();
         if (runtime != null && source.getEntity() instanceof ServerPlayer player && runtime.restricted(player)) {
             source.sendFailure(Component.translatable("trustedserver.command.restricted"));
@@ -29,7 +29,7 @@ abstract class RestrictedCommandsMixin {
 
     @Inject(method = "sendCommands", at = @At("HEAD"), cancellable = true)
     private void trustedserver$sendEmptyCommandTree(ServerPlayer player, CallbackInfo ci) {
-        TrustedServerRuntime runtime = TrustedServerRuntime.get();
+        TrustedServerRuntime runtime = TrustedServerRuntime.getForAuthentication();
         if (runtime != null && runtime.restricted(player)) {
             player.connection.send(new ClientboundCommandsPacket(new RootCommandNode<>()));
             ci.cancel();
